@@ -99,6 +99,8 @@
       var stampChk = el('input', { type: 'checkbox', checked: true });
 
       var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length });
+      var autoChk = el('input', { type: 'checkbox', checked: true });
+      var autoTimer = 0;
       var progWrap = el('div', { class: 'gs-progress', style: { display: 'none' } });
       var progBar = el('div', { class: 'gs-progress-bar' });
       progWrap.appendChild(progBar);
@@ -126,7 +128,9 @@
         el('label', { class: 'gs-check' }, [loopChk, ' Loop']),
         el('label', { class: 'gs-check' }, [stampChk, ' Burn timestamp'])
       ]));
-      panel.appendChild(prerenderBtn);
+      panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [
+        prerenderBtn, el('label', { class: 'gs-check' }, [autoChk, ' auto'])
+      ]));
       panel.appendChild(progWrap);
       panel.appendChild(progText);
 
@@ -321,6 +325,16 @@
         }
       }
 
+      // Auto-prerender the region in the background shortly after landing on it
+      // (debounced so quick region-hops don't trigger it; skipped at Native res).
+      function scheduleAutoPrerender() {
+        clearTimeout(autoTimer);
+        if (!autoChk.checked || resSel.value === 'native') return;
+        autoTimer = setTimeout(function () {
+          if (!destroyed && autoChk.checked && !state.prerendering && resSel.value !== 'native') prerenderAll();
+        }, 1000);
+      }
+
       /* ----- playback ----- */
       function stop() { state.playing = false; playBtn.textContent = '▶ Play'; if (state.raf) { cancelAnimationFrame(state.raf); state.raf = 0; } }
       function tick(ts) {
@@ -358,6 +372,7 @@
       variantMap.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
       prerenderBtn.addEventListener('click', prerenderAll);
+      autoChk.addEventListener('change', function () { autoChk.checked ? scheduleAutoPrerender() : clearTimeout(autoTimer); });
 
       /* ----- export ----- */
       function renderTo(exportCanvas, i) {
@@ -422,10 +437,12 @@
       /* ----- init: auto-show the default product ----- */
       refreshVariant();
       showProduct(selectedProduct(), true);
+      scheduleAutoPrerender();
 
       return {
         destroy: function () {
           destroyed = true;
+          clearTimeout(autoTimer);
           document.removeEventListener('keydown', onKey);
           stop();
           Object.keys(cache).forEach(function (k) {
