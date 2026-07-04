@@ -191,8 +191,8 @@
     var sat = session.sats[App.sel.sat];
     host.appendChild(makeSelect('sel-region', 'Region',
       sat.regions.map(function (r, i) {
-        var np = r.products.length, l2 = r.hasL2 ? ' · L2' : '';
-        return { value: i, label: r.id + ' (' + np + ' products' + l2 + ')' };
+        var l2 = r.hasL2 ? ' · L2' : '';
+        return { value: i, label: r.id + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' products' + l2 };
       }),
       App.sel.region, function (e) { App.sel.region = +e.target.value; buildSelectors(); mount(); }));
 

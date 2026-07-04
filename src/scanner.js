@@ -198,6 +198,9 @@
           region.products = prodArr;
           region.l2 = prodArr.filter(function (p) { return p.kind === 'l2'; });
           region.hasL2 = region.l2.length > 0;
+          // Longest single-product time series in the region — i.e. how many
+          // scans the most-frequently-captured product has (its animatable length).
+          region.maxFrames = prodArr.reduce(function (m, p) { return Math.max(m, p.frames.length); }, 0);
           regionArr.push(region);
         });
         regionArr.sort(function (a, b) {
