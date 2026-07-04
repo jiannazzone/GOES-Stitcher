@@ -179,7 +179,7 @@
     setText('stage-title', (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport');
     setKeys(overlay
       ? [['t/o', 'mode'], ['s', 'save png']]
-      : [['t/o', 'mode'], ['b', 'build'], ['␣', 'play'], ['←→', 'step'], ['e', 'webm'], ['s', 'png']]);
+      : [['t/o', 'mode'], ['b', 'prerender'], ['␣', 'play'], ['←→', 'step'], ['e', 'webm'], ['s', 'png']]);
   }
 
   function mount() {
