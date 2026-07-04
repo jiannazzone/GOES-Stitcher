@@ -161,11 +161,11 @@ a { color: var(--cyan); }
 .gs-tab-on::before, .gs-tab-on::after { color: var(--acc-dk); }
 
 /* main split into two windows */
-.gs-main { flex: 1; display: grid; grid-template-columns: 340px 1fr; gap: 16px; min-height: 0; padding: 20px 16px 14px; }
+.gs-main { flex: 1; display: grid; grid-template-columns: 340px 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; min-height: 0; padding: 20px 16px 14px; }
 .tui-win-panel, .tui-win-stage { display: flex; flex-direction: column; min-height: 0; }
 .gs-panel { padding: 16px 15px; overflow-y: auto; }
 .gs-stage {
-  position: relative; flex: 1; display: grid; place-items: center; overflow: hidden; min-height: 0;
+  position: relative; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; min-height: 0;
   background:
     linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 28px,
     linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 28px 100%,
@@ -179,7 +179,10 @@ a { color: var(--cyan); }
 }
 .gs-stage::before { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
 .gs-stage::after { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
-.gs-canvas { max-width: 100%; max-height: 100%; display: block; image-rendering: auto; border: 1px solid var(--line); }
+/* Fill the viewport regardless of the source/resolution: the canvas element
+   stretches to the stage, and object-fit keeps the whole disk visible and
+   correctly proportioned (larger resolutions simply render sharper). */
+.gs-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .gs-stage-msg {
   position: absolute; padding: 7px 12px; font-size: 12.5px; color: var(--fg-dim);
   background: var(--bg-alt); border: 1px solid var(--line);
