@@ -40,25 +40,30 @@
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
 
-      /* ----- base selector ----- */
-      var baseSel = el('select', { class: 'gs-select' });
-      var groups = { composite: 'Composites', channel: 'Raw ABI Bands', l2: 'Level-2 Products' };
-      ['composite', 'channel', 'l2'].forEach(function (kind) {
-        var items = products.filter(function (p) { return p.kind === kind; });
-        if (!items.length) return;
-        var og = el('optgroup', { label: groups[kind] });
-        items.forEach(function (p) { og.appendChild(el('option', { value: p.key, text: p.name })); });
-        baseSel.appendChild(og);
-      });
+      /* ----- base selector (cursor list) ----- */
+      var baseGroupDefs = [
+        { kind: 'composite', label: 'composites' },
+        { kind: 'channel', label: 'raw abi bands' },
+        { kind: 'l2', label: 'level-2 products' }
+      ];
       // Prefer ABI False Color as the default base if present.
       var preferred = products.filter(function (p) { return /false color/i.test(p.name); })[0] || products[0];
-      if (preferred) baseSel.value = preferred.key;
+      var baseList = GS.ui.list(
+        baseGroupDefs.map(function (g) {
+          return {
+            label: g.label,
+            items: products.filter(function (p) { return p.kind === g.kind; })
+              .map(function (p) { return { key: p.key, label: p.name, meta: '×' + p.frames.length }; })
+          };
+        }).filter(function (g) { return g.items.length; }),
+        { selected: preferred ? preferred.key : null, onSelect: function () { rebuildTimes(); scheduleRender(); } }
+      );
 
       var timeSel = el('select', { class: 'gs-select' });
       var coastChk = el('input', { type: 'checkbox' });
       var coastLabel = el('label', { class: 'gs-check' }, [coastChk, ' Coastlines on base']);
 
-      function baseProduct() { return products.filter(function (p) { return p.key === baseSel.value; })[0]; }
+      function baseProduct() { return products.filter(function (p) { return p.key === baseList.getSelected(); })[0]; }
 
       function rebuildTimes() {
         GS.dom.clear(timeSel);
@@ -78,7 +83,7 @@
       resolutionOptions(region).forEach(function (o) { resSel.appendChild(el('option', { value: String(o.v), text: o.label })); });
       resSel.value = String(defaultResolution(region));
 
-      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Base image' }), baseSel]));
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Base image' }), baseList.el]));
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Time' }), timeSel]));
       panel.appendChild(el('div', { class: 'gs-field' }, [coastLabel]));
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Resolution' }), resSel]));
@@ -167,7 +172,6 @@
       }
 
       /* ----- wiring ----- */
-      baseSel.addEventListener('change', function () { rebuildTimes(); scheduleRender(); });
       timeSel.addEventListener('change', scheduleRender);
       coastChk.addEventListener('change', scheduleRender);
       resSel.addEventListener('change', scheduleRender);
@@ -196,6 +200,8 @@
         var t = e.target, tag = t && (t.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
         if ((e.key === 's' || e.key === 'S') && !pngBtn.disabled) pngBtn.click();
+        else if (e.key === 'ArrowDown') { baseList.next(true); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { baseList.prev(true); e.preventDefault(); }
       }
       document.addEventListener('keydown', onKey);
 

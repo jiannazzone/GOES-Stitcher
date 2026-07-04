@@ -37,6 +37,61 @@
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   GS.dom = { el: el, clear: clear };
 
+  /* ---------- GS.ui: shared widgets ---------- */
+  // A keyboard-navigable, cursor-style list (grouped). Rows show a label and a
+  // right-aligned meta (e.g. frame count). Selection shows a "›" cursor.
+  //   groups: [{ label, items: [{ key, label, meta }] }]
+  //   opts:   { selected, onSelect(key) }
+  function list(groups, opts) {
+    opts = opts || {};
+    var container = el('div', { class: 'gs-list', tabindex: '0' });
+    var rows = [];
+    var selected = opts.selected || null;
+
+    groups.forEach(function (g) {
+      if (g.label) container.appendChild(el('div', { class: 'gs-list-group', text: g.label }));
+      g.items.forEach(function (it) {
+        var cur = el('span', { class: 'gs-list-cur' });
+        var row = el('div', { class: 'gs-list-row' }, [
+          cur, el('span', { class: 'gs-list-label', text: it.label }),
+          el('span', { class: 'gs-list-meta', text: it.meta || '' })
+        ]);
+        row.addEventListener('click', function () { select(it.key, true); });
+        rows.push({ key: it.key, node: row, cur: cur });
+        container.appendChild(row);
+      });
+    });
+
+    function idx(key) { for (var i = 0; i < rows.length; i++) if (rows[i].key === key) return i; return -1; }
+    function select(key, fire) {
+      selected = key;
+      rows.forEach(function (r) {
+        var on = r.key === key;
+        r.node.classList.toggle('is-sel', on);
+        r.cur.textContent = on ? '›' : '';
+      });
+      var i = idx(key);
+      if (i >= 0 && rows[i].node.scrollIntoView) rows[i].node.scrollIntoView({ block: 'nearest' });
+      if (fire && opts.onSelect) opts.onSelect(key);
+    }
+    function step(delta, fire) {
+      var i = idx(selected);
+      if (i < 0) { if (rows.length) select(rows[0].key, fire); return; }
+      var j = Math.max(0, Math.min(rows.length - 1, i + delta));
+      if (j !== i) select(rows[j].key, fire);
+    }
+    if (selected) select(selected, false);
+
+    return {
+      el: container,
+      select: select,
+      next: function (f) { step(1, f); },
+      prev: function (f) { step(-1, f); },
+      getSelected: function () { return selected; }
+    };
+  }
+  GS.ui = { list: list };
+
   /* ---------- toast ---------- */
   function toast(msg, type) {
     var host = document.getElementById('toast-host');
@@ -178,8 +233,8 @@
     setText('panel-title', overlay ? 'overlay' : 'time-lapse');
     setText('stage-title', (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport');
     setKeys(overlay
-      ? [['t/o', 'mode'], ['s', 'save png']]
-      : [['t/o', 'mode'], ['b', 'prerender'], ['␣', 'play'], ['←→', 'step'], ['e', 'webm'], ['s', 'png']]);
+      ? [['t/o', 'mode'], ['↑↓', 'base'], ['s', 'save png']]
+      : [['t/o', 'mode'], ['↑↓', 'product'], ['␣', 'play'], ['←→', 'step'], ['b', 'prerender'], ['s', 'png']]);
   }
 
   function mount() {

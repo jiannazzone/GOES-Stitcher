@@ -66,17 +66,20 @@
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
 
       /* ----- panel controls ----- */
-      var productSel = el('select', { class: 'gs-select' });
-      var groups = { composite: 'Composites', channel: 'Raw ABI Bands', l2: 'Level-2 Products' };
-      ['composite', 'channel', 'l2'].forEach(function (kind) {
-        var items = products.filter(function (p) { return p.kind === kind; });
-        if (!items.length) return;
-        var og = el('optgroup', { label: groups[kind] });
-        items.forEach(function (p) {
-          og.appendChild(el('option', { value: p.key, text: p.name + '  (' + p.frames.length + ' frame' + (p.frames.length > 1 ? 's' : '') + ')' }));
-        });
-        productSel.appendChild(og);
-      });
+      var groupDefs = [
+        { kind: 'composite', label: 'composites' },
+        { kind: 'channel', label: 'raw abi bands' },
+        { kind: 'l2', label: 'level-2 products' }
+      ];
+      var listGroups = groupDefs.map(function (g) {
+        return {
+          label: g.label,
+          items: products.filter(function (p) { return p.kind === g.kind; }).map(function (p) {
+            return { key: p.key, label: p.name, meta: '×' + p.frames.length };
+          })
+        };
+      }).filter(function (g) { return g.items.length; });
+      var productList = GS.ui.list(listGroups, { selected: products[0].key, onSelect: function () { onProductChange(); } });
 
       var variantPlain = el('input', { type: 'radio', name: 'gs-tl-var', value: 'plain', checked: true });
       var variantMap = el('input', { type: 'radio', name: 'gs-tl-var', value: 'map' });
@@ -101,7 +104,7 @@
       progWrap.appendChild(progBar);
       var progText = el('div', { class: 'gs-hint', style: { display: 'none' } });
 
-      function selectedProduct() { return products.filter(function (x) { return x.key === productSel.value; })[0]; }
+      function selectedProduct() { return products.filter(function (x) { return x.key === productList.getSelected(); })[0]; }
       function curVariant() { return (variantMap.checked && !variantMap.disabled) ? 'map' : 'plain'; }
 
       function refreshVariant() {
@@ -111,9 +114,8 @@
         variantMapLabel.classList.toggle('gs-disabled', !hasMap);
         if (!hasMap) variantPlain.checked = true;
       }
-      productSel.addEventListener('change', onProductChange);
 
-      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Product' }), productSel]));
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Product' }), productList.el]));
       panel.appendChild(el('div', { class: 'gs-field' }, [
         el('label', { class: 'gs-label', text: 'Overlay' }),
         el('div', { class: 'gs-radios' }, [el('label', { class: 'gs-radio' }, [variantPlain, ' Plain']), variantMapLabel])
@@ -409,6 +411,8 @@
         if (k === ' ' || k === 'Spacebar') { if (state.frames.length > 1) { state.playing ? stop() : play(); e.preventDefault(); } }
         else if (k === 'ArrowRight') { if (state.frames.length) { stop(); paint((state.index + 1) % state.frames.length); e.preventDefault(); } }
         else if (k === 'ArrowLeft') { if (state.frames.length) { stop(); paint((state.index - 1 + state.frames.length) % state.frames.length); e.preventDefault(); } }
+        else if (k === 'ArrowDown') { productList.next(true); e.preventDefault(); }
+        else if (k === 'ArrowUp') { productList.prev(true); e.preventDefault(); }
         else if (k === 'b' || k === 'B') { if (!prerenderBtn.disabled) prerenderAll(); }
         else if (k === 'e' || k === 'E') { if (!webmBtn.disabled) webmBtn.click(); }
         else if (k === 's' || k === 'S') { if (!pngBtn.disabled) pngBtn.click(); }
