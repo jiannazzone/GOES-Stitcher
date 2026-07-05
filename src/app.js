@@ -250,8 +250,7 @@
       }
       App.data = res;
       App.sel = { session: 0, sat: 0, region: 0 };
-      q('landing').style.display = 'none';
-      q('workspace').style.display = 'flex';
+      q('workspace').classList.remove('gs-empty');
       var summary = res.stats.sessions + ' session' + (res.stats.sessions > 1 ? 's' : '') +
         ' · ' + res.stats.used.toLocaleString() + ' images indexed';
       q('summary').textContent = summary;
@@ -270,35 +269,22 @@
     q('repick').addEventListener('click', function () { input.click(); });
     input.addEventListener('change', function () { loadFiles(Array.prototype.slice.call(input.files || [])); input.value = ''; });
 
-    var dz = q('dropzone');
-    ['dragenter', 'dragover'].forEach(function (ev) {
-      dz.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); dz.classList.add('gs-drop-hot'); });
-    });
-    ['dragleave', 'dragend'].forEach(function (ev) {
-      dz.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); dz.classList.remove('gs-drop-hot'); });
-    });
-    dz.addEventListener('drop', function (e) {
-      e.preventDefault(); e.stopPropagation(); dz.classList.remove('gs-drop-hot');
-      var busy = q('busy'); if (busy) busy.style.display = 'flex';
-      filesFromDrop(e.dataTransfer).then(function (files) {
-        if (busy) busy.style.display = 'none';
-        loadFiles(files);
-      }).catch(function (err) {
-        if (busy) busy.style.display = 'none';
-        toast('Could not read that folder: ' + err.message, 'error');
-      });
-    });
-
-    // Whole-window drop (nicer target once workspace is shown).
+    // Drop a folder anywhere on the window; the viewport highlights while dragging.
+    var dragDepth = 0;
+    function hot(on) { var st = q('stage'); if (st) st.classList.toggle('gs-drop-hot', on); }
+    window.addEventListener('dragenter', function (e) { e.preventDefault(); if (++dragDepth === 1) hot(true); });
     window.addEventListener('dragover', function (e) { e.preventDefault(); });
+    window.addEventListener('dragleave', function (e) { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; hot(false); } });
     window.addEventListener('drop', function (e) {
-      if (e.target && (e.target.id === 'dropzone' || dz.contains(e.target))) return; // handled above
-      e.preventDefault();
+      e.preventDefault(); dragDepth = 0; hot(false);
       var busy = q('busy'); if (busy) busy.style.display = 'flex';
       filesFromDrop(e.dataTransfer).then(function (files) {
         if (busy) busy.style.display = 'none';
         if (files && files.length) loadFiles(files);
-      }).catch(function () { if (busy) busy.style.display = 'none'; });
+      }).catch(function (err) {
+        if (busy) busy.style.display = 'none';
+        toast('Could not read that folder: ' + err.message, 'error');
+      });
     });
 
     if (!GS.imaging.supportsWebM()) {

@@ -183,6 +183,16 @@ a { color: var(--cyan); }
    stretches to the stage, and object-fit keeps the whole disk visible and
    correctly proportioned (larger resolutions simply render sharper). */
 .gs-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* first-visit empty state, folded into the viewport (no separate landing page) */
+.gs-empty .gs-selectors { display: none; }
+.gs-empty #panel-win { display: none; }
+.gs-empty .gs-main { grid-template-columns: minmax(0, 1fr); }
+.gs-stage.gs-drop-hot { outline: 2px dashed var(--acc); outline-offset: -8px; }
+.tui-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px; padding: 28px; max-width: 560px; }
+.tui-empty .tui-logo-word { font-size: clamp(26px, 4.5vw, 42px); }
+.tui-empty .tui-drop-row { justify-content: center; }
+.tui-empty .gs-warn-note { text-align: center; }
 .gs-stage-msg {
   position: absolute; padding: 7px 12px; font-size: 12.5px; color: var(--fg-dim);
   background: var(--bg-alt); border: 1px solid var(--line);

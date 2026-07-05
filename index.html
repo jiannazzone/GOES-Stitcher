@@ -23,45 +23,35 @@
     </div>
   </header>
 
-  <!-- boot / landing -->
-  <section id="landing" class="gs-landing">
-    <div class="tui-logo">
-      <span class="tui-logo-mark">▚ ▞ ▚ ▞</span>
-      <span class="tui-logo-word">goes<em>//</em>stitcher</span>
-      <span class="tui-logo-sub">hrit stitch utility · v1.0</span>
-    </div>
+  <!-- persistent folder picker (lives outside the stage so it survives re-renders) -->
+  <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
 
-    <div id="dropzone" class="gs-dropzone tui-win tui-drop">
-      <span class="tui-win-bar">session</span>
-      <div class="tui-drop-inner">
-        <p class="tui-prompt"><span class="arrow">&gt;</span> awaiting satdump session directory<span class="tui-caret">&nbsp;</span></p>
-        <div class="tui-drop-row">
-          <button id="pick-btn" class="gs-btn gs-btn-lg">open folder…</button>
-          <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
-          <span class="tui-or">— or drop a directory anywhere on this window —</span>
-        </div>
-        <p class="tui-fine">a single capture (<code>2026-07-04_17-10_goes_hrit_…</code>) or a parent folder of several — each session is detected. read locally in your browser; never uploaded.</p>
-      </div>
-    </div>
-
-    <div class="gs-boot-status">
-      <span><b>time-lapse</b> &nbsp;stitch matching scans across time → play, scrub, export webm</span>
-      <span><b>overlay</b> &nbsp;&nbsp;&nbsp;stack level-2 layers (rain · cloud height · cape · tpw) with blend + opacity</span>
-      <span><b>private</b> &nbsp;&nbsp;&nbsp;imagery is decoded &amp; rendered on your machine only</span>
-    </div>
-    <p id="webm-note" class="gs-warn-note" style="display:none">webm export needs chrome, edge or firefox. playback &amp; png export work everywhere.</p>
-  </section>
-
-  <!-- workspace -->
-  <div id="workspace" class="gs-workspace" style="display:none">
+  <!-- workspace is always shown; `.gs-empty` until a folder is loaded -->
+  <div id="workspace" class="gs-workspace gs-empty">
     <div id="selectors" class="gs-selectors"></div>
     <div class="gs-main">
-      <aside class="tui-win tui-win-panel"><span class="tui-win-bar" id="panel-title">controls</span><div id="panel" class="gs-panel"></div></aside>
-      <section class="tui-win tui-win-stage"><span class="tui-win-bar" id="stage-title">viewport</span><div id="stage" class="gs-stage"></div></section>
+      <aside class="tui-win tui-win-panel" id="panel-win"><span class="tui-win-bar" id="panel-title">view</span><div id="panel" class="gs-panel"></div></aside>
+      <section class="tui-win tui-win-stage"><span class="tui-win-bar" id="stage-title">viewport</span>
+        <div id="stage" class="gs-stage">
+          <div id="stage-empty" class="tui-empty">
+            <div class="tui-logo">
+              <span class="tui-logo-mark">▚ ▞ ▚ ▞</span>
+              <span class="tui-logo-word">goes<em>//</em>stitcher</span>
+              <span class="tui-logo-sub">hrit stitch utility · v1.0</span>
+            </div>
+            <p class="tui-prompt"><span class="arrow">&gt;</span> awaiting satdump session directory<span class="tui-caret">&nbsp;</span></p>
+            <div class="tui-drop-row">
+              <button id="pick-btn" class="gs-btn gs-btn-lg">open folder…</button>
+              <span class="tui-or">— or drop a directory anywhere —</span>
+            </div>
+            <p class="tui-fine">a single capture (<code>2026-07-04_17-10_goes_hrit_…</code>) or a parent folder of several — each session is detected. read locally; never uploaded.</p>
+            <p id="webm-note" class="gs-warn-note" style="display:none">webm export needs chrome, edge or firefox. playback &amp; png export work everywhere.</p>
+          </div>
+        </div>
+      </section>
     </div>
     <footer id="statusbar" class="tui-status">
-      <span class="seg st-mode" id="st-mode">TL</span>
-      <span class="seg st-loc" id="st-loc">—</span>
+      <span class="seg st-loc" id="st-loc">no folder open</span>
       <span class="spacer"></span>
       <span class="seg st-summary" id="st-summary"></span>
       <span class="seg st-keys" id="st-keys"></span>
