@@ -14,6 +14,8 @@ One **view** that combines animation over *time* with compositing over *layers*:
 
 It reads one shared, automatically-built index of your folder and caches every decoded frame, so switching base, toggling layers, and scrubbing stay instant — and **Prerender all** (on by default) decodes the whole region in the background up front.
 
+Product names are cleaned up for readability (`Rain Rate Per Quarter Hour` → **Rainfall Rate (15 min)**), every control has a hover tooltip, and a **? about** panel explains the bands, products and data model with links to NOAA/NASA references.
+
 ## Use it
 
 ### Hosted (recommended)
@@ -97,7 +99,7 @@ Plain HTML/CSS/JS with a single vendored dependency ([`mp4-muxer`](https://www.n
 | `index.html` | markup + script includes |
 | `assets/styles.css` | terminal theme |
 | `assets/fonts/` | self-hosted mono webfonts |
-| `src/catalog.js` | ABI band + L2 product metadata / names |
+| `src/catalog.js` | ABI band + product metadata, display-name cleanup, glossary |
 | `src/scanner.js` | folder → `session → sat → region → product → frames` index |
 | `src/imaging.js` | decode/downscale, compositing, MP4/video export, downloads |
 | `src/view.js` | the unified view (base + layers + timeline) |

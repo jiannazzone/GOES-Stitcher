@@ -56,6 +56,7 @@
           cur, el('span', { class: 'gs-list-label', text: it.label }),
           el('span', { class: 'gs-list-meta', text: it.meta || '' })
         ]);
+        if (it.title) row.title = it.title;
         row.addEventListener('click', function () { select(it.key, true); });
         rows.push({ key: it.key, node: row, cur: cur });
         container.appendChild(row);
@@ -91,6 +92,75 @@
     };
   }
   GS.ui = { list: list };
+
+  /* ---------- about / glossary overlay ----------
+     Built once from GS.catalog so the glossary stays in sync with the data.
+     All html: strings below are hard-coded literals (no user/filesystem text). */
+  function glossList(items) {
+    return el('dl', { class: 'gs-gloss' }, items.map(function (it) {
+      return el('div', { class: 'gs-gloss-row' }, [
+        el('dt', { text: it.name }), el('dd', { text: it.blurb })
+      ]);
+    }));
+  }
+  function buildAbout() {
+    var host = q('about');
+    if (!host || host._built) return;
+    var g = GS.catalog.glossary();
+    var bandRows = g.bands.map(function (b) {
+      return { name: 'Band ' + b.band + ' · ' + b.name + ' (' + b.wavelength + ')', blurb: b.blurb };
+    });
+    function p(html) { return el('p', { class: 'gs-about-p', html: html }); }
+    function h(t) { return el('h3', { class: 'gs-about-h', text: t }); }
+
+    var closeBtn = el('button', { class: 'gs-about-x', 'aria-label': 'Close', text: '✕' });
+    closeBtn.addEventListener('click', closeAbout);
+
+    host.appendChild(closeBtn);
+    host.appendChild(el('div', { class: 'gs-about-body' }, [
+        p('<b>goes-stitcher</b> turns a folder of <b>SatDump</b> GOES-R HRIT captures into animated, layered whole-disk imagery. Everything runs locally in your browser — nothing is uploaded.'),
+        h('How it works'),
+        p('The <b>base image</b> is the bottom layer — a composite, a single spectral band, or a Level-2 product, optionally with coastlines. Its scans define the <b>timeline</b> you play, scrub and export as MP4. <b>Level-2 layers</b> stack derived products on top with their own opacity and blend mode; each snaps to the frame nearest the base in time.'),
+        h('The data'),
+        p('GOES-R satellites (GOES-19 East, GOES-18 West) broadcast imagery over <b>HRIT</b>, which SatDump decodes into PNGs. <b>Full Disk</b> covers the whole visible hemisphere about every 10 minutes; <b>Mesoscale</b> sectors are small, fast, roving windows. All times are <b>UTC</b>.'),
+        h('Spectral bands'),
+        glossList(bandRows),
+        h('Composites & Level-2 products'),
+        glossList(g.products),
+        h('References'),
+        el('ul', { class: 'gs-refs' }, g.references.map(function (r) {
+          return el('li', {}, [el('a', { class: 'gs-link', href: r.url, target: '_blank', rel: 'noopener noreferrer', text: r.label + ' ↗' })]);
+        })),
+        el('p', { class: 'gs-about-fine', html: 'Not affiliated with NOAA or NASA. GOES imagery is public-domain data you received yourself. Source on <a class="gs-link" href="https://github.com/jiannazzone/GOES-Stitcher" target="_blank" rel="noopener noreferrer">GitHub ↗</a> · MIT.' })
+      ]));
+    host._built = true;
+  }
+  function aboutEsc(e) { if (e.key === 'Escape') closeAbout(); }
+  // Opening About swaps the viewport window's title to "about" and fills the
+  // stage with the panel, so it reads as the viewport's content — not an overlay.
+  // The title is always *recomputed* (never snapshotted), so it stays correct
+  // even if the selectors are used while the panel is open.
+  function setAboutBtn(on) {
+    var b = q('about-btn'); if (!b) return;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  function openAbout() {
+    var h = q('about'); if (!h || !h.hidden) return;   // no-op if already open
+    buildAbout();
+    h.hidden = false;
+    setText('stage-title', 'about · goes-stitcher');
+    setAboutBtn(true);
+    document.addEventListener('keydown', aboutEsc);
+  }
+  function closeAbout() {
+    var h = q('about'); if (!h || h.hidden) return;
+    h.hidden = true;
+    setText('stage-title', viewportTitle());
+    setAboutBtn(false);
+    document.removeEventListener('keydown', aboutEsc);
+  }
+  function toggleAbout() { aboutOpen() ? closeAbout() : openAbout(); }
 
   /* ---------- toast ---------- */
   function toast(msg, type) {
@@ -209,12 +279,20 @@
     });
   }
 
+  // The viewport window's title for the current selection.
+  function viewportTitle() {
+    var cur = currentRegion();
+    return (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport';
+  }
+  function aboutOpen() { var h = q('about'); return !!(h && !h.hidden); }
+
   function updateStatus() {
     var cur = currentRegion();
     var stmode = q('st-mode'); if (stmode) stmode.style.display = 'none';
     setText('st-loc', (cur && cur.region) ? (cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : '—');
     setText('panel-title', 'view');
-    setText('stage-title', (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport');
+    // Keep the "about" title while the panel is open, even across a region change.
+    setText('stage-title', aboutOpen() ? 'about · goes-stitcher' : viewportTitle());
     setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['b', 'prerender'], ['e', 'mp4'], ['s', 'png']]);
   }
 
@@ -253,7 +331,6 @@
       q('workspace').classList.remove('gs-empty');
       var summary = res.stats.sessions + ' session' + (res.stats.sessions > 1 ? 's' : '') +
         ' · ' + res.stats.used.toLocaleString() + ' images indexed';
-      q('summary').textContent = summary;
       setText('st-summary', summary);
       q('repick').style.display = 'inline-flex';
       buildSelectors();
@@ -267,6 +344,7 @@
     var input = q('folder-input');
     q('pick-btn').addEventListener('click', function (e) { e.stopPropagation(); input.click(); });
     q('repick').addEventListener('click', function () { input.click(); });
+    var aboutBtn = q('about-btn'); if (aboutBtn) aboutBtn.addEventListener('click', toggleAbout);
     // Clicking anywhere in the empty viewport opens the picker too.
     q('stage').addEventListener('click', function () { if (q('workspace').classList.contains('gs-empty')) input.click(); });
     input.addEventListener('change', function () { loadFiles(Array.prototype.slice.call(input.files || [])); input.value = ''; });

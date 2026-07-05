@@ -40,12 +40,15 @@
     if (/_map$/.test(base)) { variant = 'map'; base = base.slice(0, -4); }
 
     if (base.toLowerCase().indexOf('abi_rgb_') === 0) {
-      var name = base.slice('abi_rgb_'.length).replace(/_/g, ' ').trim();
-      if (!name) return null;
+      var rawName = base.slice('abi_rgb_'.length).replace(/_/g, ' ').trim();
+      if (!rawName) return null;
       var kind = category === 'L2' ? 'l2' : 'composite';
+      // Key off the RAW name so two distinct products never merge, even if their
+      // cleaned display names happen to coincide.
       return {
-        key: kind + '::' + name,
-        name: name,
+        key: kind + '::' + rawName,
+        name: GS.catalog.displayName(rawName),
+        rawName: rawName,
         kind: kind,
         band: null,
         variant: variant
@@ -154,7 +157,7 @@
       });
       var product = ensure(region.products, c.key, function () {
         return {
-          key: c.key, name: c.name, kind: c.kind, category: p.category,
+          key: c.key, name: c.name, rawName: c.rawName || c.name, kind: c.kind, category: p.category,
           band: c.band, blurb: GS.catalog.productBlurb(c.name), frames: new Map()
         };
       });

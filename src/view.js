@@ -61,15 +61,25 @@
       var destroyed = false;
       var cache = {};                 // "productKey|variant|res" -> entry
       var autoTimer = 0;
+      var aboutEl = document.getElementById('about');   // cached; queried on every keydown
       var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0, prerendering: false };
 
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
 
       /* ---------- base picker ---------- */
+      // Hover tooltip for a product: bands get their wavelength + what they show;
+      // composites/L2 get their plain-language blurb.
+      function tipFor(p) {
+        if (p.kind === 'channel' && p.band != null) {
+          var b = GS.catalog.bands[p.band];
+          return b ? (b.wavelength + ' — ' + b.blurb) : '';
+        }
+        return p.blurb || '';
+      }
       var groupDefs = [
         { kind: 'composite', label: 'composites' },
-        { kind: 'channel', label: 'raw abi bands' },
+        { kind: 'channel', label: 'spectral bands' },
         { kind: 'l2', label: 'level-2 products' }
       ];
       var preferred = products.filter(function (p) { return /false color/i.test(p.name); })[0] || products[0];
@@ -78,16 +88,16 @@
           return {
             label: g.label,
             items: products.filter(function (p) { return p.kind === g.kind; })
-              .map(function (p) { return { key: p.key, label: p.name, meta: '×' + p.frames.length }; })
+              .map(function (p) { return { key: p.key, label: p.name, meta: '×' + p.frames.length, title: tipFor(p) }; })
           };
         }).filter(function (g) { return g.items.length; }),
         { selected: preferred ? preferred.key : null, onSelect: function () { onBaseChange(); } }
       );
 
       var coastChk = el('input', { type: 'checkbox' });
-      var coastLabel = el('label', { class: 'gs-check' }, [coastChk, ' Coastlines']);
+      var coastLabel = el('label', { class: 'gs-check', title: 'Overlay coastlines & borders on the base image (uses SatDump’s _map version of the frame).' }, [coastChk, ' Coastlines']);
 
-      var resSel = el('select', { class: 'gs-select' });
+      var resSel = el('select', { class: 'gs-select', title: 'Working resolution for decoding, playback and export. Higher is sharper but uses more memory; video export caps at 2048 px.' });
       resolutionOptions(region).forEach(function (o) { resSel.appendChild(el('option', { value: o.v == null ? 'native' : String(o.v), text: o.label })); });
       resSel.value = String(defaultResolution(region));
 
@@ -101,12 +111,12 @@
         panel.appendChild(el('div', { class: 'gs-section-label', text: 'level-2 layers' }));
         l2.forEach(function (p) {
           var chk = el('input', { type: 'checkbox' });
-          var opacity = el('input', { type: 'range', min: '0', max: '100', value: '70', class: 'gs-range gs-range-sm' });
-          var blend = el('select', { class: 'gs-select gs-select-sm' });
+          var opacity = el('input', { type: 'range', min: '0', max: '100', value: '70', class: 'gs-range gs-range-sm', title: 'Layer opacity.' });
+          var blend = el('select', { class: 'gs-select gs-select-sm', title: 'Blend mode — how this layer combines with what’s below. Screen lets bright data show through dark, off-disk backgrounds.' });
           GS.imaging.blendModes.forEach(function (b) { blend.appendChild(el('option', { value: b.id, text: b.label })); });
           blend.value = 'screen';
           var timeTag = el('span', { class: 'gs-layer-time' });
-          var row = el('div', { class: 'gs-layer' }, [
+          var row = el('div', { class: 'gs-layer', title: tipFor(p) }, [
             el('label', { class: 'gs-layer-head' }, [chk, el('span', { class: 'gs-layer-name', text: p.name }), timeTag]),
             el('div', { class: 'gs-layer-ctl' }, [el('span', { class: 'gs-mini', text: 'opacity' }), opacity, blend])
           ]);
@@ -128,7 +138,7 @@
       var loopChk = el('input', { type: 'checkbox', checked: true });
       var stampChk = el('input', { type: 'checkbox', checked: true });
 
-      var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length });
+      var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length, title: 'Decode every product in this region up front, so switching base image and toggling layers stays instant.' });
       var autoChk = el('input', { type: 'checkbox', checked: true });
       var progWrap = el('div', { class: 'gs-progress', style: { display: 'none' } });
       var progBar = el('div', { class: 'gs-progress-bar' });
@@ -136,12 +146,12 @@
       var progText = el('div', { class: 'gs-hint', style: { display: 'none' } });
 
       panel.appendChild(el('div', { class: 'gs-section-label', text: 'timeline' }));
-      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label' }, ['Speed ', fpsOut]), fps]));
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', title: 'Playback and export frame rate.' }, ['Speed ', fpsOut]), fps]));
       panel.appendChild(el('div', { class: 'gs-field gs-checks' }, [
-        el('label', { class: 'gs-check' }, [loopChk, ' Loop']),
-        el('label', { class: 'gs-check' }, [stampChk, ' Burn timestamp'])
+        el('label', { class: 'gs-check', title: 'Repeat playback from the start.' }, [loopChk, ' Loop']),
+        el('label', { class: 'gs-check', title: 'Burn a UTC timestamp caption into playback and exports.' }, [stampChk, ' Burn timestamp'])
       ]));
-      panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [prerenderBtn, el('label', { class: 'gs-check' }, [autoChk, ' auto'])]));
+      panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [prerenderBtn, el('label', { class: 'gs-check', title: 'Prerender the whole region automatically in the background after you open it.' }, [autoChk, ' auto'])]));
       panel.appendChild(progWrap);
       panel.appendChild(progText);
 
@@ -398,6 +408,7 @@
       /* ---------- keyboard ---------- */
       function onKey(e) {
         if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if (aboutEl && !aboutEl.hidden) return;             // About panel is open
         var t = e.target, tag = t && (t.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
         var k = e.key;

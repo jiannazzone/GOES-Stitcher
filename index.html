@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>goes-stitcher — hrit stitch utility</title>
   <meta name="description" content="Stitch SatDump GOES HRIT captures into time-lapses and toggleable Level-2 overlays. Runs entirely in your browser; nothing is uploaded." />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c0a06'/><text y='.83em' x='11' font-size='84' fill='%23f2a935'>◓</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230c0a06'/><text y='.83em' x='11' font-size='84' fill='%23f2a935'>◐</text></svg>" />
   <link rel="preload" as="font" type="font/woff2" href="assets/fonts/plex-mono-400.woff2" crossorigin />
   <link rel="preload" as="font" type="font/woff2" href="assets/fonts/departure-mono.woff2" crossorigin />
   <link rel="stylesheet" href="assets/styles.css" />
@@ -13,12 +13,13 @@
 <body>
   <header class="gs-header">
     <div class="gs-brand">
-      <span class="gs-logo">◓</span>
+      <span class="gs-logo">◐</span>
       <h1>goes-stitcher</h1>
       <p class="gs-tagline">hrit stitch utility · <b>runs locally, nothing uploaded</b></p>
     </div>
     <div class="gs-header-actions">
-      <span id="summary" class="gs-summary"></span>
+      <button id="about-btn" class="gs-btn gs-btn-ghost" aria-pressed="false" title="What is this? Glossary & references.">? about</button>
+      <a class="gs-link" href="https://github.com/jiannazzone/GOES-Stitcher" target="_blank" rel="noopener noreferrer" title="Source on GitHub">github ↗</a>
       <button id="repick" class="gs-btn gs-btn-ghost" style="display:none">change folder</button>
     </div>
   </header>
@@ -53,6 +54,7 @@
         <div id="stage" class="gs-stage">
           <div id="stage-empty" class="tui-boot">
             <div class="tui-boot-head">goes-stitcher · v1.0 — hrit stitch utility</div>
+            <p class="tui-boot-sub">stitch your SatDump GOES captures into MP4 time-lapses &amp; layered whole-disk views — decoded and rendered right here in your browser.</p>
             <div class="tui-boot-log">
               <div><span class="tok-ok">[  ok  ]</span> renderer online</div>
               <div><span class="tok-ok">[  ok  ]</span> decoder ready</div>
@@ -64,6 +66,8 @@
             <p id="webm-note" class="gs-warn-note" style="display:none">video export needs a recent chrome, edge, safari or firefox. playback &amp; png export work everywhere.</p>
           </div>
         </div>
+        <!-- about / glossary panel — fills the viewport window; content built in app.js from GS.catalog -->
+        <div id="about" class="gs-about" hidden></div>
       </section>
     </div>
     <footer id="statusbar" class="tui-status">
