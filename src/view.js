@@ -10,7 +10,7 @@
  * Decoded frames are cached per (product, variant, resolution) and shared between
  * the base and the layers; "Prerender all" (and the auto pass) decode every
  * product so scrubbing and layer toggles stay instant. Exports composite each
- * frame: WebM over the whole timeline, PNG of the current composite.
+ * frame: an MP4 over the whole timeline, PNG of the current composite.
  *
  * Exposed as GS.ViewMode.create(panelEl, stageEl, region, ctx) -> { destroy }.
  */
@@ -150,14 +150,15 @@
       var nextBtn = el('button', { class: 'gs-btn gs-btn-icon', text: '⏭', disabled: true });
       var scrub = el('input', { type: 'range', min: '0', max: '0', value: '0', class: 'gs-range', disabled: true });
       var counter = el('span', { class: 'gs-num', text: '— / —' });
-      var webmBtn = el('button', { class: 'gs-btn', text: 'Export WebM', disabled: true });
+      var vidLabel = GS.imaging.supportsMp4() ? 'Export MP4' : 'Export WebM';
+      var vidBtn = el('button', { class: 'gs-btn', text: vidLabel, disabled: true });
       var pngBtn = el('button', { class: 'gs-btn', text: 'Save PNG', disabled: true });
-      if (!GS.imaging.supportsWebM()) webmBtn.title = 'WebM export needs Chrome, Edge or Firefox.';
+      if (!GS.imaging.supportsVideoExport()) vidBtn.title = 'Video export needs a recent Chrome, Edge, Safari or Firefox.';
 
       var transport = el('div', { class: 'gs-transport', style: { display: 'none' } }, [
         el('div', { class: 'gs-transport-row' }, [prevBtn, playBtn, nextBtn, counter]),
         scrub,
-        el('div', { class: 'gs-transport-row' }, [webmBtn, pngBtn])
+        el('div', { class: 'gs-transport-row' }, [vidBtn, pngBtn])
       ]);
       panel.appendChild(transport);
 
@@ -269,7 +270,7 @@
         scrub.disabled = !multi;
         scrub.max = String(Math.max(0, (e ? e.frames.length : 1) - 1));
         pngBtn.disabled = !ready;
-        webmBtn.disabled = !(multi && GS.imaging.supportsWebM());
+        vidBtn.disabled = !(multi && GS.imaging.supportsVideoExport());
         transport.style.display = ready ? 'block' : 'none';
       }
 
@@ -377,20 +378,21 @@
         if (!renderComposite(ex, state.index)) return;
         GS.imaging.canvasToPng(ex).then(function (blob) { GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[state.index].time) + '.png'); });
       });
-      webmBtn.addEventListener('click', function () {
+      vidBtn.addEventListener('click', function () {
         if (!state.baseEntry || !state.baseEntry.done) return;
         stop();
         var ex = document.createElement('canvas'), fpsVal = parseInt(fps.value, 10);
-        webmBtn.disabled = true; webmBtn.textContent = 'Recording…';
-        GS.imaging.recordWebM(ex, {
-          fps: fpsVal, count: state.baseEntry.frames.length,
-          draw: function (i) { renderComposite(ex, i); },
-          onProgress: function (d, t) { webmBtn.textContent = 'Recording… ' + d + '/' + t; }
-        }).then(function (blob) {
-          GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[0].time) + '_' + fpsVal + 'fps.webm');
-          ctx.toast('Exported WebM (' + state.baseEntry.frames.length + ' frames @ ' + fpsVal + ' fps).', 'ok');
-        }).catch(function (e) { ctx.toast('WebM export failed: ' + e.message, 'error'); })
-          .then(function () { webmBtn.textContent = 'Export WebM'; webmBtn.disabled = false; updateTransport(); });
+        var nFrames = state.baseEntry.frames.length, restore = vidBtn.textContent;
+        vidBtn.disabled = true; vidBtn.textContent = 'Encoding…';
+        GS.imaging.exportVideo({
+          fps: fpsVal, count: nFrames,
+          render: function (i) { renderComposite(ex, i); return ex; },
+          onProgress: function (d, t) { vidBtn.textContent = 'Encoding… ' + d + '/' + t; }
+        }).then(function (res) {
+          GS.imaging.downloadBlob(res.blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[0].time) + '_' + fpsVal + 'fps.' + res.ext);
+          ctx.toast('Exported ' + res.encoder + ' (' + nFrames + ' frames @ ' + fpsVal + ' fps).', 'ok');
+        }).catch(function (e) { ctx.toast('Video export failed: ' + e.message, 'error'); })
+          .then(function () { vidBtn.textContent = restore; vidBtn.disabled = false; updateTransport(); });
       });
 
       /* ---------- keyboard ---------- */
@@ -405,7 +407,7 @@
         else if (k === 'ArrowDown') { baseList.next(true); e.preventDefault(); }
         else if (k === 'ArrowUp') { baseList.prev(true); e.preventDefault(); }
         else if (k === 'b' || k === 'B') { if (!prerenderBtn.disabled) prerenderAll(); }
-        else if (k === 'e' || k === 'E') { if (!webmBtn.disabled) webmBtn.click(); }
+        else if (k === 'e' || k === 'E') { if (!vidBtn.disabled) vidBtn.click(); }
         else if (k === 's' || k === 'S') { if (!pngBtn.disabled) pngBtn.click(); }
       }
       document.addEventListener('keydown', onKey);

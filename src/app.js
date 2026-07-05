@@ -192,7 +192,7 @@
     host.appendChild(makeSelect('sel-region', 'Region',
       sat.regions.map(function (r, i) {
         var l2 = r.hasL2 ? ' · L2' : '';
-        return { value: i, label: r.id + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' products' + l2 };
+        return { value: i, label: r.id + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' product' + (r.products.length === 1 ? '' : 's') + l2 };
       }),
       App.sel.region, function (e) { App.sel.region = +e.target.value; buildSelectors(); mount(); }));
   }
@@ -215,7 +215,7 @@
     setText('st-loc', (cur && cur.region) ? (cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : '—');
     setText('panel-title', 'view');
     setText('stage-title', (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport');
-    setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['b', 'prerender'], ['e', 'webm'], ['s', 'png']]);
+    setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['b', 'prerender'], ['e', 'mp4'], ['s', 'png']]);
   }
 
   function mount() {
@@ -289,7 +289,7 @@
       });
     });
 
-    if (!GS.imaging.supportsWebM()) {
+    if (!GS.imaging.supportsVideoExport()) {
       var note = q('webm-note');
       if (note) note.style.display = 'block';
     }

@@ -61,7 +61,7 @@
             <p class="tui-boot-prompt" id="boot-prompt-idle"><span class="arrow">&gt;</span> drop a satdump folder here, or <button id="pick-btn" class="gs-btn">open folder…</button></p>
             <p class="tui-boot-prompt tui-boot-hot" id="boot-prompt-hot"><span class="arrow">&gt;</span> release to mount folder…</p>
             <p class="tui-boot-fine">a single capture (<code>2026-07-04_17-10_goes_hrit_…</code>) or a parent of several — each session is detected. read locally, never uploaded.</p>
-            <p id="webm-note" class="gs-warn-note" style="display:none">webm export needs chrome, edge or firefox. playback &amp; png export work everywhere.</p>
+            <p id="webm-note" class="gs-warn-note" style="display:none">video export needs a recent chrome, edge, safari or firefox. playback &amp; png export work everywhere.</p>
           </div>
         </div>
       </section>
@@ -78,7 +78,8 @@
   <div id="busy" class="gs-busy" style="display:none"><span class="gs-spinner"></span><span>reading folder</span></div>
   <div id="toast-host" class="gs-toast-host"></div>
 
-  <!-- load order: data → utilities → parser → modes → shell -->
+  <!-- load order: vendor → data → utilities → parser → modes → shell -->
+  <script src="src/vendor/mp4-muxer.js"></script>
   <script src="src/catalog.js"></script>
   <script src="src/imaging.js"></script>
   <script src="src/scanner.js"></script>

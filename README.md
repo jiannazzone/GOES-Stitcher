@@ -10,7 +10,7 @@ One **view** that combines animation over *time* with compositing over *layers*:
 
 - **Base image** — pick any product (composite, raw ABI band, or L2) as the bottom layer, with an optional **coastline** overlay.
 - **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**.
-- **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. Burn in a UTC timestamp and **export a WebM** of the whole run, or **save a PNG** of the current composite.
+- **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. Burn in a UTC timestamp and **export an H.264 MP4** of the whole run (encoded in-browser, plays everywhere), or **save a PNG** of the current composite.
 
 It reads one shared, automatically-built index of your folder and caches every decoded frame, so switching base, toggling layers, and scrubbing stay instant — and **Prerender all** (on by default) decodes the whole region in the background up front.
 
@@ -42,7 +42,7 @@ The workspace is keyboard-driven, like the terminal tool it's dressed as:
 | `space` | play / pause |
 | `←` / `→` | step through time |
 | `b` | prerender the whole region |
-| `e` | export WebM · `s` save PNG |
+| `e` | export MP4 · `s` save PNG |
 
 (Shortcuts are ignored while a dropdown or field is focused.)
 
@@ -58,7 +58,7 @@ The workspace is keyboard-driven, like the terminal tool it's dressed as:
 2. **Build command:** *(leave empty)* — **Output directory:** `/` (repo root).
 3. Deploy.
 
-No build step, no bundler, no dependencies.
+No build step, no bundler — just one small vendored library ([`mp4-muxer`](https://www.npmjs.com/package/mp4-muxer), MIT) checked into `src/vendor/` for MP4 export.
 
 ## What folders it understands
 
@@ -84,15 +84,13 @@ SatDump writes something like:
 ## Tips
 
 - **Full-disk images are large (5424², 15–37 MB each).** The app downscales for playback/memory; start at **1024 px** and bump to 2048/native only if you need it.
-- **WebM → MP4:** WebM exports play in browsers. To get an MP4 (e.g. for social media) with `ffmpeg`:
-  ```bash
-  ffmpeg -i timelapse.webm -c:v libx264 -pix_fmt yuv420p -movflags +faststart timelapse.mp4
-  ```
-- **Browser support:** Chrome / Edge / Firefox for WebM export. Safari can view and save PNGs but its WebM recording is unreliable (the app tells you if export isn't available).
+- **Exports are H.264 MP4**, encoded in your browser via WebCodecs — they play everywhere (QuickTime, iOS/Android, most social platforms) with no transcoding, and nothing is uploaded.
+- **Video caps at 2048²** because H.264 can't encode the native 5424² frame; PNG stills still export at whatever resolution you pick.
+- **Browser support:** MP4 export needs WebCodecs (recent Chrome/Edge, Safari 16.4+, Firefox 130+). Older browsers fall back to MediaRecorder — MP4 where the browser supports it, otherwise WebM. Playback and PNG export work everywhere (the app tells you if video export isn't available).
 
 ## How it's built
 
-Plain HTML/CSS/JS, no dependencies. A "ground-station terminal" (TUI) look: self-hosted [IBM Plex Mono](https://github.com/IBM/plex) + [Departure Mono](https://departuremono.com/) (both OFL), so it renders identically offline and on Pages with **no external requests**.
+Plain HTML/CSS/JS with a single vendored dependency ([`mp4-muxer`](https://www.npmjs.com/package/mp4-muxer), MIT, for MP4 export). A "ground-station terminal" (TUI) look: self-hosted [IBM Plex Mono](https://github.com/IBM/plex) + [Departure Mono](https://departuremono.com/) (both OFL), so it renders identically offline and on Pages with **no external requests**.
 
 | File | Role |
 | --- | --- |
@@ -101,9 +99,10 @@ Plain HTML/CSS/JS, no dependencies. A "ground-station terminal" (TUI) look: self
 | `assets/fonts/` | self-hosted mono webfonts |
 | `src/catalog.js` | ABI band + L2 product metadata / names |
 | `src/scanner.js` | folder → `session → sat → region → product → frames` index |
-| `src/imaging.js` | decode/downscale, compositing, WebM export, downloads |
+| `src/imaging.js` | decode/downscale, compositing, MP4/video export, downloads |
 | `src/view.js` | the unified view (base + layers + timeline) |
 | `src/app.js` | folder picking, selectors, view lifecycle, `GS.dom` / `GS.ui` |
+| `src/vendor/mp4-muxer.js` | vendored MP4 muxer ([mp4-muxer](https://www.npmjs.com/package/mp4-muxer), MIT) |
 
 ## License
 
