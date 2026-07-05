@@ -1,15 +1,18 @@
 # 🛰️ GOES Stitcher
 
-Turn a **SatDump GOES HRIT** output folder into **time-lapses** and **toggleable Level-2 data overlays** — entirely in your browser. Nothing is uploaded; the page reads your folder locally and does all decoding and rendering on your machine.
+Turn a **SatDump GOES HRIT** output folder into animated, layered whole-disk views — entirely in your browser. Nothing is uploaded; the page reads your folder locally and does all decoding and rendering on your machine.
 
-![mode: time-lapse + overlay](https://img.shields.io/badge/modes-time--lapse%20%2B%20L2%20overlay-38ccff) ![runs](https://img.shields.io/badge/runs-100%25%20client--side-45d69a)
+![one unified view](https://img.shields.io/badge/view-base%20%2B%20layers%20%2B%20timeline-e3b356) ![runs](https://img.shields.io/badge/runs-100%25%20client--side-45d69a)
 
 ## What it does
 
-- **Time-lapse** — pick a satellite / region / product (composite, raw ABI band, or L2), and every scan across time is stitched into a smooth loop you can **play, scrub, loop**, burn a UTC timestamp into, and **export as WebM** (or save a single frame as PNG).
-- **L2 overlay** — put a base disk image down and stack **Level-2 layers** (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**, plus a coastline toggle. Save the composite as a **PNG**.
+One **view** that combines animation over *time* with compositing over *layers*:
 
-Both modes read one shared, automatically-built index of your folder, so switching satellite/region/mode is instant.
+- **Base image** — pick any product (composite, raw ABI band, or L2) as the bottom layer, with an optional **coastline** overlay.
+- **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**.
+- **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. Burn in a UTC timestamp and **export a WebM** of the whole run, or **save a PNG** of the current composite.
+
+It reads one shared, automatically-built index of your folder and caches every decoded frame, so switching base, toggling layers, and scrubbing stay instant — and **Prerender all** (on by default) decodes the whole region in the background up front.
 
 ## Use it
 
@@ -35,11 +38,11 @@ The workspace is keyboard-driven, like the terminal tool it's dressed as:
 
 | Key | Action |
 | --- | --- |
-| `t` / `o` | switch to **t**ime-lapse / **o**verlay (`m` toggles) |
-| `b` | build the time-lapse |
+| `↑` / `↓` | change **base** image |
 | `space` | play / pause |
-| `←` / `→` | step frames |
-| `e` | export WebM · `s` | save PNG |
+| `←` / `→` | step through time |
+| `b` | prerender the whole region |
+| `e` | export WebM · `s` save PNG |
 
 (Shortcuts are ignored while a dropdown or field is focused.)
 
@@ -75,8 +78,8 @@ SatDump writes something like:
 ```
 
 - Time comes from the scan-time folder name (UTC). `_map` files are the coastline-overlaid variant.
-- Grayscale single-band L2 duplicates (`G19_ACHT_…`), `product.cbor`, stray `… copy.png`, and non-standard folders (e.g. `NWS/`) are ignored by the two modes.
-- **Note:** overlay layers of different native resolutions (e.g. 5424² vs 1086²) line up because all full-disk products share the same earth extent; they're scaled to a common working canvas.
+- Grayscale single-band L2 duplicates (`G19_ACHT_…`), `product.cbor`, stray `… copy.png`, and non-standard folders (e.g. `NWS/`) are ignored.
+- **Note:** layers of different native resolutions (e.g. 5424² vs 1086²) line up because all full-disk products share the same earth extent; they're scaled to a common working canvas.
 
 ## Tips
 
@@ -99,9 +102,8 @@ Plain HTML/CSS/JS, no dependencies. A "ground-station terminal" (TUI) look: self
 | `src/catalog.js` | ABI band + L2 product metadata / names |
 | `src/scanner.js` | folder → `session → sat → region → product → frames` index |
 | `src/imaging.js` | decode/downscale, compositing, WebM export, downloads |
-| `src/timelapse.js` | time-lapse mode |
-| `src/overlay.js` | L2 overlay mode |
-| `src/app.js` | folder picking, selectors, mode lifecycle, `GS.dom` |
+| `src/view.js` | the unified view (base + layers + timeline) |
+| `src/app.js` | folder picking, selectors, view lifecycle, `GS.dom` / `GS.ui` |
 
 ## License
 

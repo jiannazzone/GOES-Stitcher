@@ -1,0 +1,428 @@
+/*
+ * view.js — the unified view.
+ *
+ * One canvas that composites a BASE image (any composite / band / L2, optionally
+ * with coastlines) plus a stack of toggleable Level-2 LAYERS (opacity + blend) —
+ * and a single TIMELINE you scrub or play. The base product is the clock: its
+ * scans define the timeline, and every active layer snaps to its nearest frame in
+ * time as you move, so base + layers animate together.
+ *
+ * Decoded frames are cached per (product, variant, resolution) and shared between
+ * the base and the layers; "Prerender all" (and the auto pass) decode every
+ * product so scrubbing and layer toggles stay instant. Exports composite each
+ * frame: WebM over the whole timeline, PNG of the current composite.
+ *
+ * Exposed as GS.ViewMode.create(panelEl, stageEl, region, ctx) -> { destroy }.
+ */
+(function (GS) {
+  'use strict';
+
+  function sanitize(s) { return String(s).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, ''); }
+
+  function resolutionOptions(region) {
+    if (/mesoscale/i.test(region.id)) return [{ v: 500, label: '500 px (native)' }, { v: 1000, label: '1000 px' }];
+    return [
+      { v: 512, label: '512 px (fast)' },
+      { v: 1024, label: '1024 px (recommended)' },
+      { v: 2048, label: '2048 px (sharp)' },
+      { v: null, label: 'Native 5424 px (heavy)' }
+    ];
+  }
+  function defaultResolution(region) { return /mesoscale/i.test(region.id) ? 500 : 1024; }
+
+  function drawCaption(ctx, W, H, title, sub) {
+    var f = Math.max(11, Math.round(W * 0.018));
+    ctx.save();
+    ctx.textBaseline = 'alphabetic';
+    var padX = f * 0.7, padY = f * 0.55, gap = f * 0.35;
+    ctx.font = f + 'px system-ui, sans-serif';
+    var tW = ctx.measureText(title).width;
+    ctx.font = (f * 0.82) + 'px system-ui, sans-serif';
+    var sW = sub ? ctx.measureText(sub).width : 0;
+    var boxW = Math.max(tW, sW) + padX * 2;
+    var boxH = (sub ? f + f * 0.82 + gap : f) + padY * 2;
+    var x = f * 0.6, y = H - boxH - f * 0.6;
+    ctx.fillStyle = 'rgba(10,7,3,0.64)';
+    ctx.fillRect(x, y, boxW, boxH);
+    ctx.fillStyle = '#f5efe2';
+    ctx.font = f + 'px system-ui, sans-serif';
+    ctx.fillText(title, x + padX, y + padY + f * 0.85);
+    if (sub) {
+      ctx.fillStyle = '#f2c37a';
+      ctx.font = (f * 0.82) + 'px system-ui, sans-serif';
+      ctx.fillText(sub, x + padX, y + padY + f + gap + f * 0.82);
+    }
+    ctx.restore();
+  }
+
+  GS.ViewMode = {
+    create: function (panel, stage, region, ctx) {
+      var el = GS.dom.el;
+      var destroyed = false;
+      var cache = {};                 // "productKey|variant|res" -> entry
+      var autoTimer = 0;
+      var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0, prerendering: false };
+
+      var products = region.products.filter(function (p) { return p.frames.length > 0; });
+      var l2 = region.l2 || [];
+
+      /* ---------- base picker ---------- */
+      var groupDefs = [
+        { kind: 'composite', label: 'composites' },
+        { kind: 'channel', label: 'raw abi bands' },
+        { kind: 'l2', label: 'level-2 products' }
+      ];
+      var preferred = products.filter(function (p) { return /false color/i.test(p.name); })[0] || products[0];
+      var baseList = GS.ui.list(
+        groupDefs.map(function (g) {
+          return {
+            label: g.label,
+            items: products.filter(function (p) { return p.kind === g.kind; })
+              .map(function (p) { return { key: p.key, label: p.name, meta: '×' + p.frames.length }; })
+          };
+        }).filter(function (g) { return g.items.length; }),
+        { selected: preferred ? preferred.key : null, onSelect: function () { onBaseChange(); } }
+      );
+
+      var coastChk = el('input', { type: 'checkbox' });
+      var coastLabel = el('label', { class: 'gs-check' }, [coastChk, ' Coastlines']);
+
+      var resSel = el('select', { class: 'gs-select' });
+      resolutionOptions(region).forEach(function (o) { resSel.appendChild(el('option', { value: o.v == null ? 'native' : String(o.v), text: o.label })); });
+      resSel.value = String(defaultResolution(region));
+
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Base image' }), baseList.el]));
+      panel.appendChild(el('div', { class: 'gs-field' }, [coastLabel]));
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Resolution' }), resSel]));
+
+      /* ---------- L2 layers ---------- */
+      var layerControls = [];
+      if (l2.length) {
+        panel.appendChild(el('div', { class: 'gs-section-label', text: 'level-2 layers' }));
+        l2.forEach(function (p) {
+          var chk = el('input', { type: 'checkbox' });
+          var opacity = el('input', { type: 'range', min: '0', max: '100', value: '70', class: 'gs-range gs-range-sm' });
+          var blend = el('select', { class: 'gs-select gs-select-sm' });
+          GS.imaging.blendModes.forEach(function (b) { blend.appendChild(el('option', { value: b.id, text: b.label })); });
+          blend.value = 'screen';
+          var timeTag = el('span', { class: 'gs-layer-time' });
+          var row = el('div', { class: 'gs-layer' }, [
+            el('label', { class: 'gs-layer-head' }, [chk, el('span', { class: 'gs-layer-name', text: p.name }), timeTag]),
+            el('div', { class: 'gs-layer-ctl' }, [el('span', { class: 'gs-mini', text: 'opacity' }), opacity, blend])
+          ]);
+          panel.appendChild(row);
+          var lc = { product: p, chk: chk, opacity: opacity, blend: blend, timeTag: timeTag, row: row, entry: null };
+          chk.addEventListener('change', function () { onLayerToggle(lc); });
+          opacity.addEventListener('input', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
+          blend.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
+          layerControls.push(lc);
+        });
+      } else {
+        panel.appendChild(el('div', { class: 'gs-hint', html: 'No Level-2 layers in this region. Switch to a region that has L2 (e.g. <b>GOES-19 / Full Disk</b>) to stack them.' }));
+      }
+
+      /* ---------- playback controls ---------- */
+      var fps = el('input', { type: 'range', min: '1', max: '24', value: '8', class: 'gs-range' });
+      var fpsOut = el('span', { class: 'gs-num', text: '8 fps' });
+      fps.addEventListener('input', function () { fpsOut.textContent = fps.value + ' fps'; });
+      var loopChk = el('input', { type: 'checkbox', checked: true });
+      var stampChk = el('input', { type: 'checkbox', checked: true });
+
+      var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length });
+      var autoChk = el('input', { type: 'checkbox', checked: true });
+      var progWrap = el('div', { class: 'gs-progress', style: { display: 'none' } });
+      var progBar = el('div', { class: 'gs-progress-bar' });
+      progWrap.appendChild(progBar);
+      var progText = el('div', { class: 'gs-hint', style: { display: 'none' } });
+
+      panel.appendChild(el('div', { class: 'gs-section-label', text: 'timeline' }));
+      panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label' }, ['Speed ', fpsOut]), fps]));
+      panel.appendChild(el('div', { class: 'gs-field gs-checks' }, [
+        el('label', { class: 'gs-check' }, [loopChk, ' Loop']),
+        el('label', { class: 'gs-check' }, [stampChk, ' Burn timestamp'])
+      ]));
+      panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [prerenderBtn, el('label', { class: 'gs-check' }, [autoChk, ' auto'])]));
+      panel.appendChild(progWrap);
+      panel.appendChild(progText);
+
+      var playBtn = el('button', { class: 'gs-btn', text: '▶ Play', disabled: true });
+      var prevBtn = el('button', { class: 'gs-btn gs-btn-icon', text: '⏮', disabled: true });
+      var nextBtn = el('button', { class: 'gs-btn gs-btn-icon', text: '⏭', disabled: true });
+      var scrub = el('input', { type: 'range', min: '0', max: '0', value: '0', class: 'gs-range', disabled: true });
+      var counter = el('span', { class: 'gs-num', text: '— / —' });
+      var webmBtn = el('button', { class: 'gs-btn', text: 'Export WebM', disabled: true });
+      var pngBtn = el('button', { class: 'gs-btn', text: 'Save PNG', disabled: true });
+      if (!GS.imaging.supportsWebM()) webmBtn.title = 'WebM export needs Chrome, Edge or Firefox.';
+
+      var transport = el('div', { class: 'gs-transport', style: { display: 'none' } }, [
+        el('div', { class: 'gs-transport-row' }, [prevBtn, playBtn, nextBtn, counter]),
+        scrub,
+        el('div', { class: 'gs-transport-row' }, [webmBtn, pngBtn])
+      ]);
+      panel.appendChild(transport);
+
+      /* ---------- stage ---------- */
+      var canvas = el('canvas', { class: 'gs-canvas' });
+      var stageMsg = el('div', { class: 'gs-stage-msg', text: 'Loading region…' });
+      stage.appendChild(canvas);
+      stage.appendChild(stageMsg);
+
+      /* ---------- cache / build ---------- */
+      function framesFor(product, variant) {
+        var fs = product.frames.filter(function (f) { return f.variants[variant]; });
+        if (!fs.length && variant === 'map') fs = product.frames.filter(function (f) { return f.variants.plain; });
+        return fs.map(function (f) { return { time: f.time, label: f.label, file: f.variants[variant] || f.variants.plain || f.variants.map }; });
+      }
+      function keyFor(product, variant) { return product.key + '|' + variant + '|' + resSel.value; }
+      function getEntry(product, variant) {
+        var k = keyFor(product, variant);
+        var e = cache[k];
+        if (!e) {
+          var frames = framesFor(product, variant);
+          e = { key: k, product: product, variant: variant, size: resSel.value === 'native' ? null : parseInt(resSel.value, 10), frames: frames, bitmaps: new Array(frames.length), done: frames.length === 0, promise: null };
+          cache[k] = e;
+        }
+        return e;
+      }
+      function buildEntry(e, onFrame) {
+        if (e.done) return Promise.resolve(e);
+        if (e.promise) return e.promise;
+        var i = 0;
+        e.promise = new Promise(function (resolve) {
+          (function next() {
+            if (destroyed) { resolve(e); return; }
+            if (i >= e.frames.length) { e.done = true; resolve(e); return; }
+            GS.imaging.decodeScaled(e.frames[i].file, e.size).then(function (bmp) {
+              if (destroyed) { if (bmp.close) bmp.close(); resolve(e); return; }
+              e.bitmaps[i] = bmp; i++;
+              if (onFrame) onFrame(e, i);
+              next();
+            }).catch(function (err) { ctx.toast('Decode failed: ' + err.message, 'error'); i++; next(); });
+          })();
+        });
+        return e.promise;
+      }
+      function pruneCache() {
+        var suffix = '|' + resSel.value;   // resolution is in the key suffix
+        Object.keys(cache).forEach(function (k) {
+          if (k.indexOf(suffix, k.length - suffix.length) === -1) {
+            (cache[k].bitmaps || []).forEach(function (b) { if (b && b.close) b.close(); });
+            delete cache[k];
+          }
+        });
+      }
+      function nearestIndex(entry, t) {
+        var best = 0, bd = Infinity;
+        for (var i = 0; i < entry.frames.length; i++) { var d = Math.abs(entry.frames[i].time - t); if (d < bd) { bd = d; best = i; } }
+        return best;
+      }
+
+      function selectedBase() { return products.filter(function (p) { return p.key === baseList.getSelected(); })[0]; }
+      function curVariant() { return (coastChk.checked && selectedBase() && selectedBase().hasMap) ? 'map' : 'plain'; }
+      function activeLayerEntries() {
+        var out = [];
+        layerControls.forEach(function (lc) {
+          if (lc.chk.checked) { lc.entry = getEntry(lc.product, 'plain'); out.push(lc.entry); }
+        });
+        return out;
+      }
+
+      /* ---------- compositing ---------- */
+      function renderComposite(dest, i) {
+        var base = state.baseEntry;
+        var bb = base && base.bitmaps[i];
+        if (!bb) return false;
+        dest.width = bb.width; dest.height = bb.height;
+        var cx = dest.getContext('2d');
+        cx.clearRect(0, 0, dest.width, dest.height);
+        cx.fillStyle = '#080604'; cx.fillRect(0, 0, dest.width, dest.height);
+        cx.globalCompositeOperation = 'source-over'; cx.globalAlpha = 1;
+        cx.drawImage(bb, 0, 0, dest.width, dest.height);
+        var t = base.frames[i].time;
+        layerControls.forEach(function (lc) {
+          if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) { if (!lc.chk.checked) lc.timeTag.textContent = ''; return; }
+          var ni = nearestIndex(lc.entry, t), lb = lc.entry.bitmaps[ni];
+          if (!lb) return;
+          cx.globalCompositeOperation = lc.blend.value || 'screen';
+          cx.globalAlpha = parseInt(lc.opacity.value, 10) / 100;
+          cx.drawImage(lb, 0, 0, dest.width, dest.height);
+          lc.timeTag.textContent = lc.entry.frames[ni].label;
+        });
+        cx.globalCompositeOperation = 'source-over'; cx.globalAlpha = 1;
+        if (stampChk.checked) drawCaption(cx, dest.width, dest.height, GS.imaging.formatUTC(t), base.product.name + ' · ' + ctx.satLabel + ' · ' + region.id);
+        return true;
+      }
+
+      function paint(i) {
+        if (!renderComposite(canvas, i)) return;
+        var n = state.baseEntry.frames.length;
+        counter.textContent = (i + 1) + ' / ' + n + '  ·  ' + state.baseEntry.frames[i].label;
+        scrub.value = String(i);
+        state.index = i;
+      }
+
+      function updateTransport() {
+        var e = state.baseEntry;
+        var ready = !!(e && e.done && e.frames.length >= 1);
+        var multi = !!(e && e.done && e.frames.length > 1);
+        [playBtn, prevBtn, nextBtn].forEach(function (b) { b.disabled = !multi; });
+        scrub.disabled = !multi;
+        scrub.max = String(Math.max(0, (e ? e.frames.length : 1) - 1));
+        pngBtn.disabled = !ready;
+        webmBtn.disabled = !(multi && GS.imaging.supportsWebM());
+        transport.style.display = ready ? 'block' : 'none';
+      }
+
+      /* ---------- assemble the scene (base + active layers) ---------- */
+      function showScene(resetIndex) {
+        var base = getEntry(selectedBase(), curVariant());
+        state.baseEntry = base;
+        if (resetIndex || state.index >= base.frames.length) state.index = 0;
+        if (!base.frames.length) { stageMsg.textContent = 'No frames for this base.'; stageMsg.style.display = 'block'; updateTransport(); return Promise.resolve(); }
+
+        var needed = [base].concat(activeLayerEntries());
+        var toBuild = needed.filter(function (e) { return !e.done; });
+        if (!toBuild.length) { stageMsg.style.display = 'none'; paint(state.index); updateTransport(); return Promise.resolve(); }
+
+        stageMsg.textContent = 'Decoding…'; stageMsg.style.display = 'block';
+        if (!state.prerendering) { progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%'; }
+        var done = 0, total = toBuild.length;
+        return (function chain(idx) {
+          if (destroyed || idx >= total) return Promise.resolve();
+          var e = toBuild[idx];
+          return buildEntry(e, function (entry, nf) {
+            if (state.baseEntry === entry && nf === 1) { stageMsg.style.display = 'none'; paint(0); }
+            else if (state.baseEntry && state.baseEntry.done) paint(state.index);
+            if (!state.prerendering) { progBar.style.width = Math.round(((done + nf / e.frames.length) / total) * 100) + '%'; progText.textContent = 'Decoding ' + e.product.name + '…'; }
+          }).then(function () { done++; return chain(idx + 1); });
+        })(0).then(function () {
+          if (destroyed) return;
+          if (!state.prerendering) { progWrap.style.display = 'none'; progText.style.display = 'none'; }
+          stageMsg.style.display = 'none';
+          paint(state.index); updateTransport();
+        });
+      }
+
+      /* ---------- prerender ---------- */
+      function prerenderAll() {
+        if (state.prerendering) return;
+        var base = selectedBase();
+        var list = products.slice().sort(function (a, b) { return a === base ? -1 : b === base ? 1 : 0; });
+        var total = list.length, done = 0;
+        state.prerendering = true; prerenderBtn.disabled = true; prerenderBtn.textContent = 'Prerendering…';
+        progWrap.style.display = 'block'; progText.style.display = 'block';
+        (function step(i) {
+          if (destroyed) { finish(false); return; }
+          if (i >= list.length) { finish(true); return; }
+          progBar.style.width = Math.round((done / total) * 100) + '%';
+          progText.textContent = 'Prerendering ' + (done + 1) + ' / ' + total + ' · ' + list[i].name;
+          buildEntry(getEntry(list[i], 'plain'), function () {}).then(function () {
+            if (state.baseEntry && state.baseEntry.done) { updateTransport(); paint(state.index); }
+            done++; step(i + 1);
+          });
+        })(0);
+        function finish(ok) {
+          state.prerendering = false; prerenderBtn.disabled = false; prerenderBtn.textContent = 'Prerender all · ' + products.length;
+          progWrap.style.display = 'none'; progText.style.display = 'none';
+          if (ok) ctx.toast('Prerendered ' + total + ' product' + (total > 1 ? 's' : '') + '.', 'ok');
+        }
+      }
+      function scheduleAutoPrerender() {
+        clearTimeout(autoTimer);
+        if (!autoChk.checked || resSel.value === 'native') return;
+        autoTimer = setTimeout(function () { if (!destroyed && autoChk.checked && !state.prerendering && resSel.value !== 'native') prerenderAll(); }, 1000);
+      }
+
+      /* ---------- playback ---------- */
+      function stop() { state.playing = false; playBtn.textContent = '▶ Play'; if (state.raf) { cancelAnimationFrame(state.raf); state.raf = 0; } }
+      function tick(ts) {
+        if (!state.playing) return;
+        if (!state.last) state.last = ts;
+        var step = 1000 / Math.max(1, parseInt(fps.value, 10));
+        state.acc += ts - state.last; state.last = ts;
+        var n = state.baseEntry.frames.length;
+        while (state.acc >= step) {
+          state.acc -= step;
+          var nx = state.index + 1;
+          if (nx >= n) { if (loopChk.checked) nx = 0; else { paint(n - 1); stop(); return; } }
+          paint(nx);
+        }
+        state.raf = requestAnimationFrame(tick);
+      }
+      function play() { if (!state.baseEntry || state.baseEntry.frames.length < 2) return; state.playing = true; state.last = 0; state.acc = 0; playBtn.textContent = '⏸ Pause'; state.raf = requestAnimationFrame(tick); }
+
+      playBtn.addEventListener('click', function () { state.playing ? stop() : play(); });
+      prevBtn.addEventListener('click', function () { stop(); paint((state.index - 1 + state.baseEntry.frames.length) % state.baseEntry.frames.length); });
+      nextBtn.addEventListener('click', function () { stop(); paint((state.index + 1) % state.baseEntry.frames.length); });
+      scrub.addEventListener('input', function () { stop(); paint(parseInt(scrub.value, 10)); });
+
+      /* ---------- change handlers ---------- */
+      function onBaseChange() { var wp = state.playing; stop(); showScene(true).then(function () { if (wp && !destroyed) play(); }); }
+      function onDimChange() { var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      function onLayerToggle(lc) { var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      coastChk.addEventListener('change', onDimChange);
+      resSel.addEventListener('change', onDimChange);
+      prerenderBtn.addEventListener('click', prerenderAll);
+      autoChk.addEventListener('change', function () { autoChk.checked ? scheduleAutoPrerender() : clearTimeout(autoTimer); });
+
+      /* ---------- export ---------- */
+      function baseName() {
+        var b = state.baseEntry && state.baseEntry.product;
+        var on = layerControls.filter(function (lc) { return lc.chk.checked; }).map(function (lc) { return lc.product.name.replace(/[^A-Za-z0-9]+/g, ''); }).join('+');
+        return sanitize(ctx.satLabel.split(' ')[0] + '_' + region.id + '_' + (b ? b.name : 'view') + (on ? '_over_' + on : ''));
+      }
+      pngBtn.addEventListener('click', function () {
+        if (!state.baseEntry || !state.baseEntry.done) return;
+        var ex = document.createElement('canvas');
+        if (!renderComposite(ex, state.index)) return;
+        GS.imaging.canvasToPng(ex).then(function (blob) { GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[state.index].time) + '.png'); });
+      });
+      webmBtn.addEventListener('click', function () {
+        if (!state.baseEntry || !state.baseEntry.done) return;
+        stop();
+        var ex = document.createElement('canvas'), fpsVal = parseInt(fps.value, 10);
+        webmBtn.disabled = true; webmBtn.textContent = 'Recording…';
+        GS.imaging.recordWebM(ex, {
+          fps: fpsVal, count: state.baseEntry.frames.length,
+          draw: function (i) { renderComposite(ex, i); },
+          onProgress: function (d, t) { webmBtn.textContent = 'Recording… ' + d + '/' + t; }
+        }).then(function (blob) {
+          GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[0].time) + '_' + fpsVal + 'fps.webm');
+          ctx.toast('Exported WebM (' + state.baseEntry.frames.length + ' frames @ ' + fpsVal + ' fps).', 'ok');
+        }).catch(function (e) { ctx.toast('WebM export failed: ' + e.message, 'error'); })
+          .then(function () { webmBtn.textContent = 'Export WebM'; webmBtn.disabled = false; updateTransport(); });
+      });
+
+      /* ---------- keyboard ---------- */
+      function onKey(e) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target, tag = t && (t.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+        var k = e.key;
+        if (k === ' ' || k === 'Spacebar') { if (state.baseEntry && state.baseEntry.frames.length > 1) { state.playing ? stop() : play(); e.preventDefault(); } }
+        else if (k === 'ArrowRight') { if (state.baseEntry && state.baseEntry.frames.length) { stop(); paint((state.index + 1) % state.baseEntry.frames.length); e.preventDefault(); } }
+        else if (k === 'ArrowLeft') { if (state.baseEntry && state.baseEntry.frames.length) { stop(); paint((state.index - 1 + state.baseEntry.frames.length) % state.baseEntry.frames.length); e.preventDefault(); } }
+        else if (k === 'ArrowDown') { baseList.next(true); e.preventDefault(); }
+        else if (k === 'ArrowUp') { baseList.prev(true); e.preventDefault(); }
+        else if (k === 'b' || k === 'B') { if (!prerenderBtn.disabled) prerenderAll(); }
+        else if (k === 'e' || k === 'E') { if (!webmBtn.disabled) webmBtn.click(); }
+        else if (k === 's' || k === 'S') { if (!pngBtn.disabled) pngBtn.click(); }
+      }
+      document.addEventListener('keydown', onKey);
+
+      /* ---------- init ---------- */
+      showScene(true);
+      scheduleAutoPrerender();
+
+      return {
+        destroy: function () {
+          destroyed = true;
+          clearTimeout(autoTimer);
+          document.removeEventListener('keydown', onKey);
+          stop();
+          Object.keys(cache).forEach(function (k) { (cache[k].bitmaps || []).forEach(function (b) { if (b && b.close) b.close(); }); });
+        }
+      };
+    }
+  };
+})(window.GS = window.GS || {});

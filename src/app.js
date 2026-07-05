@@ -150,7 +150,7 @@
   /* ---------- app state ---------- */
   var App = {
     data: null,
-    sel: { session: 0, sat: 0, region: 0, mode: 'timelapse' },
+    sel: { session: 0, sat: 0, region: 0 },
     mode: null // active mode instance
   };
 
@@ -195,22 +195,6 @@
         return { value: i, label: r.id + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' products' + l2 };
       }),
       App.sel.region, function (e) { App.sel.region = +e.target.value; buildSelectors(); mount(); }));
-
-    // Mode tabs
-    var tabs = el('div', { class: 'gs-tabs' });
-    [['timelapse', 'Time-lapse'], ['overlay', 'Overlay']].forEach(function (m) {
-      var b = el('button', { class: 'gs-tab' + (App.sel.mode === m[0] ? ' gs-tab-on' : ''), text: m[1] });
-      b.addEventListener('click', function () { setMode(m[0]); });
-      tabs.appendChild(b);
-    });
-    host.appendChild(el('div', { class: 'gs-topfield gs-topfield-tabs' }, [el('label', { class: 'gs-toplabel', text: 'Mode' }), tabs]));
-  }
-
-  function setMode(m) {
-    if (App.sel.mode === m) return;
-    App.sel.mode = m;
-    buildSelectors();
-    mount();
   }
 
   function setText(id, txt) { var e = q(id); if (e) e.textContent = txt; }
@@ -227,14 +211,11 @@
 
   function updateStatus() {
     var cur = currentRegion();
-    var overlay = App.sel.mode === 'overlay';
-    setText('st-mode', overlay ? 'OV' : 'TL');
+    var stmode = q('st-mode'); if (stmode) stmode.style.display = 'none';
     setText('st-loc', (cur && cur.region) ? (cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : '—');
-    setText('panel-title', overlay ? 'overlay' : 'time-lapse');
+    setText('panel-title', 'view');
     setText('stage-title', (cur && cur.region) ? ('viewport · ' + cur.sat.id.toLowerCase() + ' · ' + cur.region.id.toLowerCase()) : 'viewport');
-    setKeys(overlay
-      ? [['t/o', 'mode'], ['↑↓', 'base'], ['s', 'save png']]
-      : [['t/o', 'mode'], ['↑↓', 'product'], ['␣', 'play'], ['←→', 'step'], ['b', 'prerender'], ['s', 'png']]);
+    setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['b', 'prerender'], ['e', 'webm'], ['s', 'png']]);
   }
 
   function mount() {
@@ -247,9 +228,8 @@
     if (!cur || !cur.region) { panel.appendChild(el('div', { class: 'gs-hint', text: 'No region selected.' })); return; }
 
     var ctx = { toast: toast, satLabel: cur.sat.label };
-    var Mode = App.sel.mode === 'overlay' ? GS.OverlayMode : GS.TimelapseMode;
     try {
-      App.mode = Mode.create(panel, stage, cur.region, ctx);
+      App.mode = GS.ViewMode.create(panel, stage, cur.region, ctx);
     } catch (e) {
       panel.appendChild(el('div', { class: 'gs-hint', text: 'Error: ' + e.message } ));
       if (window.console) console.error(e);
@@ -269,7 +249,7 @@
         return;
       }
       App.data = res;
-      App.sel = { session: 0, sat: 0, region: 0, mode: App.sel.mode };
+      App.sel = { session: 0, sat: 0, region: 0 };
       q('landing').style.display = 'none';
       q('workspace').style.display = 'flex';
       var summary = res.stats.sessions + ' session' + (res.stats.sessions > 1 ? 's' : '') +
@@ -331,16 +311,6 @@
     tickClock();
     setInterval(tickClock, 1000);
 
-    // Global keyboard: switch modes (mode-specific keys live in the modes).
-    document.addEventListener('keydown', function (e) {
-      if (!App.data || e.metaKey || e.ctrlKey || e.altKey) return;
-      var t = e.target, tag = t && (t.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'select' || tag === 'textarea' || (t && t.isContentEditable)) return;
-      var k = (e.key || '').toLowerCase();
-      if (k === 't') { setMode('timelapse'); e.preventDefault(); }
-      else if (k === 'o') { setMode('overlay'); e.preventDefault(); }
-      else if (k === 'm') { setMode(App.sel.mode === 'overlay' ? 'timelapse' : 'overlay'); e.preventDefault(); }
-    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
