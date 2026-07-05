@@ -265,8 +265,10 @@
   /* ---------- wiring ---------- */
   function init() {
     var input = q('folder-input');
-    q('pick-btn').addEventListener('click', function () { input.click(); });
+    q('pick-btn').addEventListener('click', function (e) { e.stopPropagation(); input.click(); });
     q('repick').addEventListener('click', function () { input.click(); });
+    // Clicking anywhere in the empty viewport opens the picker too.
+    q('stage').addEventListener('click', function () { if (q('workspace').classList.contains('gs-empty')) input.click(); });
     input.addEventListener('change', function () { loadFiles(Array.prototype.slice.call(input.files || [])); input.value = ''; });
 
     // Drop a folder anywhere on the window; the viewport highlights while dragging.

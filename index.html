@@ -28,9 +28,27 @@
 
   <!-- workspace is always shown; `.gs-empty` until a folder is loaded -->
   <div id="workspace" class="gs-workspace gs-empty">
-    <div id="selectors" class="gs-selectors"></div>
+    <div id="selectors" class="gs-selectors">
+      <div class="gs-topfield"><label class="gs-toplabel">Satellite</label><select class="gs-select"><option>—</option></select></div>
+      <div class="gs-topfield"><label class="gs-toplabel">Region</label><select class="gs-select"><option>— open a session —</option></select></div>
+    </div>
     <div class="gs-main">
-      <aside class="tui-win tui-win-panel" id="panel-win"><span class="tui-win-bar" id="panel-title">view</span><div id="panel" class="gs-panel"></div></aside>
+      <aside class="tui-win tui-win-panel" id="panel-win"><span class="tui-win-bar" id="panel-title">view</span>
+        <div id="panel" class="gs-panel">
+          <div class="gs-ghost">
+            <div class="gs-field"><label class="gs-label">Base image</label>
+              <div class="gs-list">
+                <div class="gs-list-group">composites</div>
+                <div class="gs-list-row is-sel"><span class="gs-list-cur">›</span><span class="gs-list-label">open a session…</span><span class="gs-list-meta"></span></div>
+                <div class="gs-list-row"><span class="gs-list-cur"></span><span class="gs-list-label">—</span><span class="gs-list-meta"></span></div>
+              </div>
+            </div>
+            <div class="gs-field"><label class="gs-check"><input type="checkbox"> Coastlines</label></div>
+            <div class="gs-section-label">level-2 layers</div>
+            <div class="gs-section-label">timeline</div>
+          </div>
+        </div>
+      </aside>
       <section class="tui-win tui-win-stage"><span class="tui-win-bar" id="stage-title">viewport</span>
         <div id="stage" class="gs-stage">
           <div id="stage-empty" class="tui-empty">
@@ -42,7 +60,7 @@
             <p class="tui-prompt"><span class="arrow">&gt;</span> awaiting satdump session directory<span class="tui-caret">&nbsp;</span></p>
             <div class="tui-drop-row">
               <button id="pick-btn" class="gs-btn gs-btn-lg">open folder…</button>
-              <span class="tui-or">— or drop a directory anywhere —</span>
+              <span class="tui-or">— or drop a folder here —</span>
             </div>
             <p class="tui-fine">a single capture (<code>2026-07-04_17-10_goes_hrit_…</code>) or a parent folder of several — each session is detected. read locally; never uploaded.</p>
             <p id="webm-note" class="gs-warn-note" style="display:none">webm export needs chrome, edge or firefox. playback &amp; png export work everywhere.</p>
