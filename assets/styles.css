@@ -77,7 +77,7 @@ a { color: var(--cyan); }
   padding: 9px 16px; border-bottom: 1px solid var(--line); background: var(--bg-alt);
 }
 .gs-brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
-.gs-logo { font-family: var(--display); color: var(--acc); font-size: 15px; letter-spacing: 1px; }
+.gs-logo { font-family: var(--display); color: var(--acc); font-size: 17px; line-height: 1; }
 .gs-header h1 { margin: 0; font-family: var(--display); font-size: 16px; font-weight: 400; letter-spacing: 1px; color: var(--fg); }
 .gs-header h1::before { content: ""; }
 .gs-tagline { margin: 0; font-size: 12px; color: var(--fg-faint); }
@@ -104,39 +104,12 @@ a { color: var(--cyan); }
 .gs-btn-primary:hover:not(:disabled) { color: var(--bg); background: var(--acc); }
 .gs-btn-primary:hover:not(:disabled)::before, .gs-btn-primary:hover:not(:disabled)::after { color: var(--bg); }
 .gs-btn-ghost { background: transparent; border-color: var(--line); }
-.gs-btn-lg { font-size: 14px; padding: 9px 16px; }
 .gs-btn-icon::before, .gs-btn-icon::after { content: ""; }
 .gs-btn-icon { padding: 5px 9px; }
 
-/* ============================ landing / boot ============================ */
-.gs-landing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; padding: 40px 20px; }
-.tui-logo { text-align: center; line-height: 1.2; }
-.tui-logo-mark { display: block; font-family: var(--display); color: var(--acc); font-size: 22px; letter-spacing: 6px; margin-bottom: 8px; }
-.tui-logo-word { display: block; font-family: var(--display); font-size: clamp(30px, 8vw, 58px); letter-spacing: 3px; color: var(--fg); }
-.tui-logo-word em { color: var(--acc); font-style: normal; }
-.tui-logo-sub { display: block; margin-top: 10px; font-size: 12.5px; color: var(--fg-faint); letter-spacing: 1px; }
-
-.gs-dropzone { width: min(620px, 94vw); }
-.tui-drop { padding: 30px 26px; margin-top: 6px; }
-.tui-drop.gs-drop-hot { border-color: var(--acc); background: #181109; }
-.tui-drop.gs-drop-hot .tui-win-bar { color: var(--acc); }
-.tui-drop-inner { display: flex; flex-direction: column; gap: 16px; }
-.tui-prompt { margin: 0; font-size: 14px; color: var(--fg); }
-.tui-prompt .arrow { color: var(--acc); }
-.tui-caret { display: inline-block; width: .6ch; background: var(--acc); color: var(--acc); animation: caret 1.05s steps(1) infinite; margin-left: 2px; }
+/* blinking cursor keyframe — used by the busy-overlay cursor (.gs-busy span::after) */
 @keyframes caret { 50% { opacity: 0; } }
-.tui-drop-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.tui-or { color: var(--fg-faint); font-size: 12.5px; }
-.tui-fine { margin: 0; font-size: 12px; color: var(--fg-faint); line-height: 1.6; }
-.tui-fine code { color: var(--amber); }
-
-.gs-boot-status { width: min(620px, 94vw); display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--fg-dim); }
-.gs-boot-status span::before { content: "  ● "; color: var(--acc); }
-.gs-boot-status .warn::before { content: "  ! "; color: var(--amber); }
-.gs-boot-status .warn { color: var(--amber); }
-
-/* legacy landing classes neutralised (kept in case markup lingers) */
-.gs-explain, .gs-badge, .gs-drop-icon, .gs-drop-sub { display: none; }
+/* warning note (e.g. webm-export unsupported), shown in the empty-state boot log */
 .gs-warn-note { max-width: 620px; text-align: left; font-size: 12px; color: var(--amber); border: 1px solid var(--line); border-left: 2px solid var(--amber); padding: 8px 12px; }
 
 /* ============================ workspace ============================ */
@@ -166,11 +139,8 @@ a { color: var(--cyan); }
 .gs-panel { padding: 16px 15px; overflow-y: auto; }
 .gs-stage {
   position: relative; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; min-height: 0;
-  background:
-    linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 28px,
-    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 28px 100%,
-    var(--bg-inset);
-  background-color: var(--bg-inset);
+  /* clean inset field; the corner ticks below (::before/::after) frame it */
+  background: var(--bg-inset);
 }
 /* corner registration ticks on the viewport */
 .gs-stage::before, .gs-stage::after {
@@ -186,15 +156,26 @@ a { color: var(--cyan); }
 
 /* first-visit empty state — SAME layout as the loaded workspace (selectors on
    top, controls on the left, viewport on the right). The selectors/panel show an
-   inert placeholder; the viewport is the "open / drop a folder" target. */
+   inert placeholder; the viewport becomes a left-aligned boot log / drop target
+   — a booting device waiting for input, not a centered marketing hero. */
 .gs-ghost { opacity: .45; pointer-events: none; }
 .gs-empty .gs-selectors .gs-select { pointer-events: none; opacity: .6; }
 .gs-stage.gs-drop-hot { outline: 2px dashed var(--acc); outline-offset: -8px; }
-.gs-empty .gs-stage { cursor: pointer; }
-.tui-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px; padding: 28px; max-width: 560px; }
-.tui-empty .tui-logo-word { font-size: clamp(24px, 3.2vw, 38px); }
-.tui-empty .tui-drop-row { justify-content: center; }
-.tui-empty .gs-warn-note { text-align: center; }
+.gs-empty .gs-stage { cursor: pointer; align-items: flex-start; justify-content: flex-start; }
+
+.tui-boot { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 14px; padding: 26px 30px; max-width: 660px; }
+.tui-boot-head { font-family: var(--display); font-size: 15px; letter-spacing: .5px; color: var(--fg); }
+.tui-boot-head::before { content: "◓ "; color: var(--acc); }
+.tui-boot-log { font-size: 13px; line-height: 1.75; color: var(--fg-dim); }
+.tui-boot-log .tok-ok { color: var(--acc); font-style: normal; }
+.tui-boot-log .tok-wait { color: var(--amber); font-style: normal; }
+.tui-boot-prompt { margin: 4px 0 0; font-size: 14px; color: var(--fg); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tui-boot-prompt .arrow { color: var(--acc); }
+.tui-boot-hot { display: none; color: var(--acc); }
+.gs-stage.gs-drop-hot #boot-prompt-idle { display: none; }
+.gs-stage.gs-drop-hot #boot-prompt-hot { display: flex; }
+.tui-boot-fine { margin: 2px 0 0; font-size: 12px; color: var(--fg-faint); line-height: 1.6; max-width: 62ch; }
+.tui-boot .gs-warn-note { text-align: left; }
 .gs-stage-msg {
   position: absolute; padding: 7px 12px; font-size: 12.5px; color: var(--fg-dim);
   background: var(--bg-alt); border: 1px solid var(--line);
