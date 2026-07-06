@@ -105,6 +105,38 @@
     { label: 'SatDump (the decoder)', url: 'https://www.satdump.org/' }
   ];
 
+  // Colorbar scales for SatDump's colorized L2 products. SatDump applies a fixed
+  // LUT to the raw 8-bit HRIT counts (deterministic, not auto-scaled) but discards
+  // the count→value calibration, so:
+  //   - `stops` reproduces SatDump's LUT ramp (low→high), so the bar matches what's
+  //     drawn on screen; space / no-retrieval / clear-sky sentinel counts (black)
+  //     are trimmed off the ends.
+  //   - numeric min/max come from NOAA F&PS / ATBDs and are shown only where they
+  //     could be verified (ACHT, ACHA, RRQPE). CAPE/TPW keep certain units but an
+  //     unverifiable range, so they render a relative low→high bar with no numbers.
+  var L2_SCALES = [
+    { id: 'acht', match: /ACHT|cloud[\s-]*top temp/i, units: 'K', numeric: true, min: 180, max: 300,
+      stops: ['#7316ed', '#401cfa', '#3650ff', '#4dabff', '#60e4d0', '#67fe7c', '#65fe05', '#86fe00', '#b5f600', '#f8e300', '#ff0000'],
+      note: 'Standard GOES-R product range (180–300 K); SatDump carries no per-frame calibration. Cold cloud tops read violet/blue, warm surfaces red. Black = space / clear.',
+      source: 'NOAA GOES-R F&PS · Cloud ACHA ATBD v3.4' },
+    { id: 'acha', match: /ACHA|cloud height/i, units: 'km', numeric: true, min: 0, max: 20,
+      stops: ['#e29a1a', '#e5d11d', '#d7fc19', '#90f500', '#62f00a', '#65f17c', '#5bd5c0', '#479bdb', '#3f61e5', '#3f27e6', '#5819b8'],
+      note: 'Standard GOES-R product range (0–20 km); no per-frame calibration. Black = no retrieval.',
+      source: 'NOAA GOES-R F&PS · Cloud ACHA ATBD v3.4' },
+    { id: 'rrqpe', match: /RRQPE|rain rate/i, units: 'mm/hr', numeric: true, min: 0, max: 100,
+      stops: ['#c3c3c3', '#cfcfce', '#dadbda', '#e6e6e6', '#b763be', '#e623e8', '#ff4f00', '#ffed00', '#0cbf07', '#031eca', '#036fea'],
+      note: 'Standard GOES-R product range (0–100 mm/hr); no per-frame calibration. Clear-sky is transparent/black.',
+      source: 'NOAA GOES-R Enterprise Rainfall Rate ATBD v3' },
+    { id: 'cape', match: /CAPE|derived stability|\bDSI\b/i, units: 'J/kg', numeric: false,
+      stops: ['#920ea0', '#7b0652', '#cd192d', '#ef4e3d', '#f4a94d', '#f8f700', '#a4a446', '#6f6eaf', '#a198c4', '#c5a890', '#93764b', '#523f21'],
+      note: 'SatDump does not carry CAPE’s value scale, so this is a relative low→high gradient (units J/kg).',
+      source: 'NOAA GOES-R Derived Stability Indices' },
+    { id: 'tpw', match: /TPW|precipitable/i, units: 'mm', numeric: false,
+      stops: ['#fff1ff', '#ffe4ff', '#ffd7ff', '#ffc9ff', '#f654f6', '#8f008f', '#df6752', '#eef509', '#418942', '#6565b4', '#cfa489', '#3e2a0b'],
+      note: 'SatDump does not carry TPW’s value scale, so this is a relative low→high gradient (units mm).',
+      source: 'NOAA GOES-R Total Precipitable Water' }
+  ];
+
   // Light tidy for a raw product name we don't have an explicit mapping for.
   function cleanFallback(s) {
     return String(s).replace(/\s+Band$/i, '').replace(/\s*-\s*/g, ' — ').replace(/\s+/g, ' ').trim();
@@ -135,6 +167,12 @@
     // Blurb for a *clean* display name.
     productBlurb: function (name) {
       return PRODUCT_BLURBS[name] || '';
+    },
+
+    // Colorbar scale for an L2 product (matched on its raw SatDump name), or null.
+    l2Scale: function (rawName) {
+      for (var i = 0; i < L2_SCALES.length; i++) if (L2_SCALES[i].match.test(rawName || '')) return L2_SCALES[i];
+      return null;
     },
 
     satelliteLabel: function (id) {

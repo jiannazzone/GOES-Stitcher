@@ -116,8 +116,12 @@
 
       /* ---------- L2 layers ---------- */
       var layerControls = [];
+      var legendChk = null;
       if (l2.length) {
         panel.appendChild(el('div', { class: 'gs-section-label', text: 'level-2 layers' }));
+        legendChk = el('input', { type: 'checkbox', checked: true });
+        legendChk.addEventListener('change', updateLegend);
+        panel.appendChild(el('label', { class: 'gs-check gs-legend-toggle', title: 'Show a color scale for active Level-2 layers. Numeric where NOAA’s standard product range is known (cloud-top temperature/height, rain rate); a relative low→high scale otherwise.' }, [legendChk, ' Legend']));
         l2.forEach(function (p) {
           var chk = el('input', { type: 'checkbox' });
           var opacity = el('input', { type: 'range', min: '0', max: '100', value: '70', class: 'gs-range gs-range-sm', title: 'Layer opacity.' });
@@ -262,8 +266,10 @@
       /* ---------- stage ---------- */
       var canvas = el('canvas', { class: 'gs-canvas' });
       var stageMsg = el('div', { class: 'gs-stage-msg', text: 'Loading region…' });
+      var legend = el('div', { class: 'gs-legend', style: { display: 'none' } });
       stage.appendChild(canvas);
       stage.appendChild(stageMsg);
+      stage.appendChild(legend);
 
       /* ---------- cache / build ---------- */
       function framesFor(product, variant) {
@@ -402,6 +408,32 @@
         transport.style.display = ready ? 'block' : 'none';
       }
 
+      // Color scale(s) for the active L2 layers — a DOM overlay in the stage (not
+      // burned into exports). Numeric endpoints only where NOAA's product range is
+      // verified; otherwise a relative low→high bar. Rebuilt on any layer change.
+      function updateLegend() {
+        if (!legend) return;
+        GS.dom.clear(legend);
+        if (!legendChk || !legendChk.checked) { legend.style.display = 'none'; return; }
+        var shown = 0;
+        layerControls.forEach(function (lc) {
+          if (!lc.chk.checked) return;
+          var s = GS.catalog.l2Scale(lc.product.rawName);
+          if (!s) return;
+          shown++;
+          legend.appendChild(el('div', { class: 'gs-cbar', title: s.note + ' — source: ' + s.source }, [
+            el('div', { class: 'gs-cbar-name', text: lc.product.name }),
+            el('div', { class: 'gs-cbar-track', style: { background: 'linear-gradient(90deg,' + s.stops.join(',') + ')' } }),
+            el('div', { class: 'gs-cbar-scale' }, [
+              el('span', { text: s.numeric ? String(s.min) : 'low' }),
+              el('span', { class: 'gs-cbar-units', text: s.units }),
+              el('span', { text: s.numeric ? String(s.max) : 'high' })
+            ])
+          ]));
+        });
+        legend.style.display = shown ? 'block' : 'none';
+      }
+
       /* ---------- assemble the scene (base + active layers) ---------- */
       function showScene(resetIndex) {
         var base = getEntry(selectedBase(), curVariant());
@@ -411,7 +443,7 @@
 
         var needed = [base].concat(activeLayerEntries());
         var toBuild = needed.filter(function (e) { return !e.done; });
-        if (!toBuild.length) { stageMsg.style.display = 'none'; paint(state.index); updateTransport(); return Promise.resolve(); }
+        if (!toBuild.length) { stageMsg.style.display = 'none'; paint(state.index); updateTransport(); updateLegend(); return Promise.resolve(); }
 
         stageMsg.textContent = 'Decoding…'; stageMsg.style.display = 'block';
         if (!state.prerendering) { progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%'; }
@@ -428,7 +460,7 @@
           if (destroyed) return;
           if (!state.prerendering) { progWrap.style.display = 'none'; progText.style.display = 'none'; }
           stageMsg.style.display = 'none';
-          paint(state.index); updateTransport();
+          paint(state.index); updateTransport(); updateLegend();
         });
       }
 
