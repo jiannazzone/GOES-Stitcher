@@ -4,6 +4,8 @@ Turn a **SatDump GOES HRIT** output folder into animated, layered whole-disk vie
 
 ![one unified view](https://img.shields.io/badge/view-base%20%2B%20layers%20%2B%20timeline-e3b356) ![runs](https://img.shields.io/badge/runs-100%25%20client--side-45d69a)
 
+> 🤖 **Co-authored with Claude.** This project was designed and built collaboratively with Anthropic's [Claude](https://claude.com/claude-code) (Claude Code). The git history reflects that — commits carry `Co-Authored-By: Claude` trailers.
+
 ## What it does
 
 One **view** that combines animation over *time* with compositing over *layers*:
@@ -108,6 +110,8 @@ SatDump writes something like:
 ## How it's built
 
 Plain HTML/CSS/JS with a single vendored dependency ([`mp4-muxer`](https://www.npmjs.com/package/mp4-muxer), MIT, for MP4 export). A "ground-station terminal" (TUI) look: self-hosted [IBM Plex Mono](https://github.com/IBM/plex) + [Departure Mono](https://departuremono.com/) (both OFL), so it renders identically offline and on Pages with **no external requests**.
+
+The code was pair-programmed with Anthropic's **Claude** (Claude Code) — architecture, implementation, and review — with a human in the loop on every decision.
 
 | File | Role |
 | --- | --- |
