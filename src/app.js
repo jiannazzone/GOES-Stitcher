@@ -345,6 +345,29 @@
     q('pick-btn').addEventListener('click', function (e) { e.stopPropagation(); input.click(); });
     q('repick').addEventListener('click', function () { input.click(); });
     var aboutBtn = q('about-btn'); if (aboutBtn) aboutBtn.addEventListener('click', toggleAbout);
+
+    // Optional "try sample data" button — only shown when a samples/manifest.json
+    // with files exists and we're not on file:// (relative fetch is blocked there).
+    var sampleBtn = q('sample-btn');
+    if (sampleBtn && GS.samples) {
+      GS.samples.available().then(function (m) { if (m) sampleBtn.style.display = 'inline-flex'; });
+      sampleBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var busy = q('busy'), busyText = busy && busy.lastElementChild;
+        if (busyText) busyText.textContent = 'loading sample data';
+        if (busy) busy.style.display = 'flex';
+        GS.samples.load().then(function (files) {
+          if (busy) busy.style.display = 'none';
+          if (busyText) busyText.textContent = 'reading folder';
+          loadFiles(files);
+        }).catch(function () {
+          if (busy) busy.style.display = 'none';
+          if (busyText) busyText.textContent = 'reading folder';
+          toast('Sample data needs the hosted site or a local server (not file://).', 'error');
+        });
+      });
+    }
+
     // Clicking anywhere in the empty viewport opens the picker too.
     q('stage').addEventListener('click', function () { if (q('workspace').classList.contains('gs-empty')) input.click(); });
     input.addEventListener('change', function () { loadFiles(Array.prototype.slice.call(input.files || [])); input.value = ''; });
