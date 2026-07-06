@@ -64,6 +64,14 @@
       var aboutEl = document.getElementById('about');   // cached; queried on every keydown
       var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0, prerendering: false };
 
+      // Deflicker uses ctx.filter='brightness(g)' per frame; feature-detect once
+      // (older Safari ignores canvas filters). lumaCv samples frame brightness.
+      var CTX_FILTER_OK = (function () {
+        try { var c = document.createElement('canvas').getContext('2d'); c.filter = 'brightness(0.5)'; return c.filter !== '' && c.filter !== 'none'; }
+        catch (e) { return false; }
+      })();
+      var lumaCv = document.createElement('canvas'); lumaCv.width = lumaCv.height = 64;
+
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
 
@@ -137,6 +145,8 @@
       fps.addEventListener('input', function () { fpsOut.textContent = fps.value + ' fps'; });
       var loopChk = el('input', { type: 'checkbox', checked: true });
       var stampChk = el('input', { type: 'checkbox', checked: true });
+      var deflickChk = el('input', { type: 'checkbox' });
+      if (!CTX_FILTER_OK) deflickChk.disabled = true;
 
       var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length, title: 'Decode every product in this region up front, so switching base image and toggling layers stays instant.' });
       var autoChk = el('input', { type: 'checkbox', checked: true });
@@ -149,7 +159,8 @@
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', title: 'Playback and export frame rate.' }, ['Speed ', fpsOut]), fps]));
       panel.appendChild(el('div', { class: 'gs-field gs-checks' }, [
         el('label', { class: 'gs-check', title: 'Repeat playback from the start.' }, [loopChk, ' Loop']),
-        el('label', { class: 'gs-check', title: 'Burn a UTC timestamp caption into playback and exports.' }, [stampChk, ' Burn timestamp'])
+        el('label', { class: 'gs-check', title: 'Burn a UTC timestamp caption into playback and exports.' }, [stampChk, ' Burn timestamp']),
+        el('label', { class: 'gs-check', title: CTX_FILTER_OK ? 'Even out frame-to-frame brightness flicker (e.g. as the day/night terminator sweeps the disk). Normalizes the base layer toward the median frame; best on visible/false-color, harmless on IR.' : 'Deflicker needs a browser with canvas filter support.' }, [deflickChk, ' Deflicker'])
       ]));
       panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [prerenderBtn, el('label', { class: 'gs-check', title: 'Prerender the whole region automatically in the background after you open it.' }, [autoChk, ' auto'])]));
       panel.appendChild(progWrap);
@@ -238,17 +249,47 @@
         return out;
       }
 
+      /* ---------- deflicker ---------- */
+      function deflickOn() { return CTX_FILTER_OK && deflickChk.checked; }
+      // Mean on-disk luminance of a bitmap, alpha-weighted so transparent off-disk
+      // pixels don't skew it. Sampled at 64×64 — cheap enough to do per frame once.
+      function frameMean(bmp) {
+        var s = 64, c = lumaCv.getContext('2d');
+        c.clearRect(0, 0, s, s); c.drawImage(bmp, 0, 0, s, s);
+        var d = c.getImageData(0, 0, s, s).data, sl = 0, sa = 0;
+        for (var i = 0; i < d.length; i += 4) {
+          var a = d[i + 3]; if (!a) continue;
+          sl += (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) * a; sa += a;
+        }
+        return sa ? sl / sa : 0;
+      }
+      // Per-frame brightness gains toward the median frame (computed once per entry,
+      // clamped so it corrects flicker without blowing out a single dark frame).
+      function ensureGains(entry) {
+        if (!entry || !entry.done || entry.gains) return;
+        var n = entry.bitmaps.length, means = new Array(n), i;
+        for (i = 0; i < n; i++) { var b = entry.bitmaps[i]; means[i] = b ? frameMean(b) : 0; }
+        var valid = means.filter(function (m) { return m > 1; }).sort(function (a, b) { return a - b; });
+        if (!valid.length) { entry.gains = null; return; }
+        var ref = valid[Math.floor(valid.length / 2)];
+        entry.gains = means.map(function (m) { return m > 1 ? Math.max(0.5, Math.min(2, ref / m)) : 1; });
+      }
+
       /* ---------- compositing ---------- */
       function renderComposite(dest, i) {
         var base = state.baseEntry;
         var bb = base && base.bitmaps[i];
         if (!bb) return false;
+        if (deflickOn() && base.done && !base.gains) ensureGains(base);
         dest.width = bb.width; dest.height = bb.height;
         var cx = dest.getContext('2d');
         cx.clearRect(0, 0, dest.width, dest.height);
         cx.fillStyle = '#080604'; cx.fillRect(0, 0, dest.width, dest.height);
         cx.globalCompositeOperation = 'source-over'; cx.globalAlpha = 1;
+        var gain = (deflickOn() && base.gains) ? base.gains[i] : 1;
+        if (gain !== 1) cx.filter = 'brightness(' + gain + ')';
         cx.drawImage(bb, 0, 0, dest.width, dest.height);
+        if (gain !== 1) cx.filter = 'none';
         var t = base.frames[i].time;
         layerControls.forEach(function (lc) {
           if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) { if (!lc.chk.checked) lc.timeTag.textContent = ''; return; }
@@ -373,6 +414,7 @@
       function onLayerToggle(lc) { var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       coastChk.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
+      deflickChk.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
       prerenderBtn.addEventListener('click', prerenderAll);
       autoChk.addEventListener('change', function () { autoChk.checked ? scheduleAutoPrerender() : clearTimeout(autoTimer); });
 
