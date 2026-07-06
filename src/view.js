@@ -71,6 +71,7 @@
         catch (e) { return false; }
       })();
       var lumaCv = document.createElement('canvas'); lumaCv.width = lumaCv.height = 64;
+      var batchRunning = false;
 
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
@@ -183,6 +184,81 @@
       ]);
       panel.appendChild(transport);
 
+      /* ---------- batch export ---------- */
+      // Pick several products, render each as its own MP4, download all in one ZIP
+      // (like goes-timelapse --all). Base-only: the L2 layer stack isn't applied.
+      var batchItems = [];
+      var animatable = products.filter(function (p) { return p.frames.length > 1; });
+      if (animatable.length && GS.imaging.supportsVideoExport()) {
+        var batchList = el('div', { class: 'gs-batch-list' });
+        animatable.forEach(function (p) {
+          var cb = el('input', { type: 'checkbox' });
+          batchList.appendChild(el('label', { class: 'gs-batch-row', title: tipFor(p) }, [
+            cb, el('span', { class: 'gs-batch-name', text: p.name }), el('span', { class: 'gs-batch-meta', text: '×' + p.frames.length })
+          ]));
+          batchItems.push({ product: p, cb: cb });
+        });
+        var batchAll = el('input', { type: 'checkbox' });
+        var batchBtn = el('button', { class: 'gs-btn', text: 'Export selected as ZIP', disabled: true, title: 'Render each checked product as its own MP4 and download them together in one ZIP. Uses the current resolution, speed, coastlines and deflicker; L2 layers are not applied.' });
+
+        var syncBatch = function () {
+          var n = batchItems.filter(function (it) { return it.cb.checked; }).length;
+          batchBtn.disabled = !n || batchRunning;
+          if (!batchRunning) batchBtn.textContent = n ? ('Export ' + n + ' as ZIP') : 'Export selected as ZIP';
+        };
+
+        function runBatch() {
+          var chosen = batchItems.filter(function (it) { return it.cb.checked; }).map(function (it) { return it.product; });
+          if (!chosen.length || batchRunning) return;
+          stop(); clearTimeout(autoTimer);
+          batchRunning = true; syncBatch();
+          var fpsVal = parseInt(fps.value, 10), ex = document.createElement('canvas'), results = [];
+          progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%';
+
+          function finish() {
+            progWrap.style.display = 'none'; progText.style.display = 'none';
+            updateTransport();
+            if (!results.length) { batchRunning = false; syncBatch(); return; }
+            batchBtn.textContent = 'Zipping…';
+            var zipName = sanitize(ctx.satLabel.split(' ')[0] + '_' + region.id) + '_batch_' + fpsVal + 'fps.zip';
+            GS.imaging.zipStore(results).then(function (blob) {
+              GS.imaging.downloadBlob(blob, zipName);
+              ctx.toast('Exported ' + results.length + ' clip' + (results.length > 1 ? 's' : '') + ' → ' + zipName, 'ok');
+            }).catch(function (e) { ctx.toast('ZIP failed: ' + e.message, 'error'); })
+              .then(function () { batchRunning = false; syncBatch(); });
+          }
+
+          (function chain(idx) {
+            if (destroyed || idx >= chosen.length) { finish(); return; }
+            var p = chosen[idx], variant = (coastChk.checked && p.hasMap) ? 'map' : 'plain', entry = getEntry(p, variant);
+            progText.textContent = 'Batch ' + (idx + 1) + ' / ' + chosen.length + ' · ' + p.name;
+            buildEntry(entry, function (e, nf) {
+              progBar.style.width = Math.round(((idx + nf / Math.max(1, e.frames.length)) / chosen.length) * 100) + '%';
+            }).then(function () {
+              if (destroyed || entry.frames.length < 1) { chain(idx + 1); return; }
+              batchBtn.textContent = 'Encoding ' + (idx + 1) + '/' + chosen.length + '…';
+              return GS.imaging.exportVideo({
+                fps: fpsVal, count: entry.frames.length,
+                render: function (i) { renderComposite(ex, i, { base: entry, layers: false }); return ex; },
+                onProgress: function (d, t) { batchBtn.textContent = 'Encoding ' + (idx + 1) + '/' + chosen.length + '… ' + d + '/' + t; }
+              }).then(function (res) {
+                results.push({ name: sanitize(ctx.satLabel.split(' ')[0] + '_' + region.id + '_' + p.name) + '_' + GS.imaging.stamp(entry.frames[0].time) + '_' + fpsVal + 'fps.' + res.ext, blob: res.blob });
+                chain(idx + 1);
+              });
+            }).catch(function (e) { ctx.toast('Batch failed on ' + p.name + ': ' + e.message, 'error'); finish(); });
+          })(0);
+        }
+
+        batchAll.addEventListener('change', function () { batchItems.forEach(function (it) { it.cb.checked = batchAll.checked; }); syncBatch(); });
+        batchItems.forEach(function (it) { it.cb.addEventListener('change', syncBatch); });
+        batchBtn.addEventListener('click', runBatch);
+        panel.appendChild(el('details', { class: 'gs-batch' }, [
+          el('summary', { class: 'gs-batch-sum', text: 'Batch export · ' + animatable.length + ' products' }),
+          el('label', { class: 'gs-check gs-batch-all' }, [batchAll, ' select all']),
+          batchList, batchBtn
+        ]));
+      }
+
       /* ---------- stage ---------- */
       var canvas = el('canvas', { class: 'gs-canvas' });
       var stageMsg = el('div', { class: 'gs-stage-msg', text: 'Loading region…' });
@@ -276,8 +352,9 @@
       }
 
       /* ---------- compositing ---------- */
-      function renderComposite(dest, i) {
-        var base = state.baseEntry;
+      function renderComposite(dest, i, opts) {
+        opts = opts || {};
+        var base = opts.base || state.baseEntry;
         var bb = base && base.bitmaps[i];
         if (!bb) return false;
         if (deflickOn() && base.done && !base.gains) ensureGains(base);
@@ -291,7 +368,7 @@
         cx.drawImage(bb, 0, 0, dest.width, dest.height);
         if (gain !== 1) cx.filter = 'none';
         var t = base.frames[i].time;
-        layerControls.forEach(function (lc) {
+        if (opts.layers !== false) layerControls.forEach(function (lc) {
           if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) { if (!lc.chk.checked) lc.timeTag.textContent = ''; return; }
           var ni = nearestIndex(lc.entry, t), lb = lc.entry.bitmaps[ni];
           if (!lb) return;

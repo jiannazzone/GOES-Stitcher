@@ -264,6 +264,71 @@
     return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
   }
 
+  /* ---------- store-only ZIP (batch export) ----------
+     Bundles already-compressed files (MP4s) with no compression, so one download
+     delivers many clips. STORE method only — no deflate — which keeps it tiny and
+     dependency-free. Not ZIP64: fine well below 4 GB / 65k files. */
+  var CRC_TABLE = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(buf) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function localHeader(nameBytes, crc, size) {
+    var h = new Uint8Array(30 + nameBytes.length), v = new DataView(h.buffer);
+    v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true); v.setUint16(6, 0x0800, true);
+    v.setUint16(8, 0, true); v.setUint16(10, 0, true); v.setUint16(12, 0x21, true);
+    v.setUint32(14, crc, true); v.setUint32(18, size, true); v.setUint32(22, size, true);
+    v.setUint16(26, nameBytes.length, true); v.setUint16(28, 0, true);
+    h.set(nameBytes, 30); return h;
+  }
+  function centralHeader(nameBytes, crc, size, offset) {
+    var h = new Uint8Array(46 + nameBytes.length), v = new DataView(h.buffer);
+    v.setUint32(0, 0x02014b50, true); v.setUint16(4, 20, true); v.setUint16(6, 20, true);
+    v.setUint16(8, 0x0800, true); v.setUint16(10, 0, true); v.setUint16(12, 0, true);
+    v.setUint16(14, 0x21, true); v.setUint32(16, crc, true); v.setUint32(20, size, true);
+    v.setUint32(24, size, true); v.setUint16(28, nameBytes.length, true);
+    v.setUint16(30, 0, true); v.setUint16(32, 0, true); v.setUint16(34, 0, true);
+    v.setUint16(36, 0, true); v.setUint32(38, 0, true); v.setUint32(42, offset, true);
+    h.set(nameBytes, 46); return h;
+  }
+  function eocd(n, cdSize, cdOffset) {
+    var h = new Uint8Array(22), v = new DataView(h.buffer);
+    v.setUint32(0, 0x06054b50, true); v.setUint16(4, 0, true); v.setUint16(6, 0, true);
+    v.setUint16(8, n, true); v.setUint16(10, n, true); v.setUint32(12, cdSize, true);
+    v.setUint32(16, cdOffset, true); v.setUint16(20, 0, true); return h;
+  }
+  function blobBytes(blob) {
+    return blob.arrayBuffer ? blob.arrayBuffer() : new Response(blob).arrayBuffer();
+  }
+  // entries: [{ name, blob }] -> Promise<Blob> (application/zip)
+  function zipStore(entries) {
+    var enc = new TextEncoder();
+    return Promise.all(entries.map(function (e) {
+      return blobBytes(e.blob).then(function (ab) { return { name: enc.encode(e.name), data: new Uint8Array(ab) }; });
+    })).then(function (items) {
+      var chunks = [], central = [], offset = 0, i;
+      for (i = 0; i < items.length; i++) {
+        var it = items[i], crc = crc32(it.data), size = it.data.length, lh = localHeader(it.name, crc, size);
+        chunks.push(lh, it.data);
+        central.push(centralHeader(it.name, crc, size, offset));
+        offset += lh.length + size;
+      }
+      var cdOffset = offset, cdSize = 0;
+      for (i = 0; i < central.length; i++) { chunks.push(central[i]); cdSize += central[i].length; }
+      chunks.push(eocd(items.length, cdSize, cdOffset));
+      return new Blob(chunks, { type: 'application/zip' });
+    });
+  }
+
   GS.imaging = {
     formatDate: formatDate,
     formatClock: formatClock,
@@ -280,6 +345,7 @@
     exportVideo: exportVideo,
     downloadBlob: downloadBlob,
     canvasToPng: canvasToPng,
+    zipStore: zipStore,
     delay: delay
   };
 })(window.GS = window.GS || {});
