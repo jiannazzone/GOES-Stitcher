@@ -20,8 +20,8 @@ Product names are cleaned up for readability (`Rain Rate Per Quarter Hour` → *
 
 ## Use it
 
-### Hosted (recommended)
-Open the deployed page and click **Choose folder…** (or drag a folder onto it), then point it at a SatDump session — e.g. `2026-07-04_17-10_goes_hrit_1.6941 GHz` — **or** at a parent folder containing several sessions (each is detected).
+### Hosted (recommended) https://goes.k2cat.xyz
+Open the deployed page [here](https://goes.k2cat.xyz) and click **Choose folder…** (or drag a folder onto it), then point it at a SatDump session — e.g. `2026-07-04_17-10_goes_hrit_1.6941 GHz` — **or** at a parent folder containing several sessions (each is detected).
 
 > Folder access uses the standard `<input webkitdirectory>` picker: the browser reads files locally and **does not upload** them.
 
