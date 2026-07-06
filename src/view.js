@@ -72,6 +72,7 @@
       })();
       var lumaCv = document.createElement('canvas'); lumaCv.width = lumaCv.height = 64;
       var batchRunning = false;
+      var view = { scale: 1, tx: 0, ty: 0 };   // pan/zoom of the on-screen canvas
 
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
@@ -113,6 +114,7 @@
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Base image' }), baseList.el]));
       panel.appendChild(el('div', { class: 'gs-field' }, [coastLabel]));
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Resolution' }), resSel]));
+      panel.appendChild(el('div', { class: 'gs-hint gs-zoomhint', text: 'viewport · scroll to zoom · drag to pan · double-click resets' }));
 
       /* ---------- L2 layers ---------- */
       var layerControls = [];
@@ -368,6 +370,8 @@
         var cx = dest.getContext('2d');
         cx.clearRect(0, 0, dest.width, dest.height);
         cx.fillStyle = '#080604'; cx.fillRect(0, 0, dest.width, dest.height);
+        var vw = opts.view;   // pan/zoom transform (on-screen only; exports omit it)
+        if (vw && (vw.scale !== 1 || vw.tx !== 0 || vw.ty !== 0)) cx.setTransform(vw.scale, 0, 0, vw.scale, vw.tx, vw.ty);
         cx.globalCompositeOperation = 'source-over'; cx.globalAlpha = 1;
         var gain = (deflickOn() && base.gains) ? base.gains[i] : 1;
         if (gain !== 1) cx.filter = 'brightness(' + gain + ')';
@@ -383,13 +387,14 @@
           cx.drawImage(lb, 0, 0, dest.width, dest.height);
           lc.timeTag.textContent = lc.entry.frames[ni].label;
         });
+        cx.setTransform(1, 0, 0, 1, 0, 0);   // caption in screen space, unaffected by zoom
         cx.globalCompositeOperation = 'source-over'; cx.globalAlpha = 1;
         if (stampChk.checked) drawCaption(cx, dest.width, dest.height, GS.imaging.formatUTC(t), base.product.name + ' · ' + ctx.satLabel + ' · ' + region.id);
         return true;
       }
 
       function paint(i) {
-        if (!renderComposite(canvas, i)) return;
+        if (!renderComposite(canvas, i, { view: view })) return;
         var n = state.baseEntry.frames.length;
         counter.textContent = (i + 1) + ' / ' + n + '  ·  ' + state.baseEntry.frames[i].label;
         scrub.value = String(i);
@@ -519,13 +524,66 @@
 
       /* ---------- change handlers ---------- */
       function onBaseChange() { var wp = state.playing; stop(); showScene(true).then(function () { if (wp && !destroyed) play(); }); }
-      function onDimChange() { var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      function onDimChange() { resetView(); var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       function onLayerToggle(lc) { var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       coastChk.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
       deflickChk.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
       prerenderBtn.addEventListener('click', prerenderAll);
       autoChk.addEventListener('change', function () { autoChk.checked ? scheduleAutoPrerender() : clearTimeout(autoTimer); });
+
+      /* ---------- pan / zoom (viewport inspection) ---------- */
+      // Viewing aid only: transforms the on-screen canvas; exports stay full-disk.
+      // Zoom samples the working-resolution bitmap, so deep zoom is soft — raise
+      // Resolution for crisp inspection.
+      function toCanvasPx(e) {
+        var r = canvas.getBoundingClientRect(), W = canvas.width, H = canvas.height;
+        if (!W || !H || !r.width || !r.height) return null;
+        var ds = Math.min(r.width / W, r.height / H);
+        return { x: (e.clientX - r.left - (r.width - W * ds) / 2) / ds, y: (e.clientY - r.top - (r.height - H * ds) / 2) / ds };
+      }
+      function clampView() {
+        var W = canvas.width || 1, H = canvas.height || 1;
+        if (view.scale <= 1) { view.scale = 1; view.tx = 0; view.ty = 0; }
+        else {
+          view.tx = Math.max(W * (1 - view.scale), Math.min(0, view.tx));
+          view.ty = Math.max(H * (1 - view.scale), Math.min(0, view.ty));
+        }
+        canvas.classList.toggle('gs-zoomed', view.scale > 1);
+      }
+      function resetView() {
+        if (view.scale === 1 && !view.tx && !view.ty) return;
+        view.scale = 1; view.tx = 0; view.ty = 0;
+        canvas.classList.remove('gs-zoomed', 'gs-grabbing');
+        if (state.baseEntry && state.baseEntry.done) paint(state.index);
+      }
+      canvas.addEventListener('wheel', function (e) {
+        if (!state.baseEntry || !state.baseEntry.done) return;
+        e.preventDefault();
+        var p = toCanvasPx(e); if (!p) return;
+        var ns = Math.max(1, Math.min(8, view.scale * Math.exp(-e.deltaY * 0.0015)));
+        if (ns === view.scale) return;
+        view.tx = p.x - (ns / view.scale) * (p.x - view.tx);   // keep point under cursor fixed
+        view.ty = p.y - (ns / view.scale) * (p.y - view.ty);
+        view.scale = ns; clampView(); paint(state.index);
+      }, { passive: false });
+      var dragging = false, lastX = 0, lastY = 0;
+      canvas.addEventListener('pointerdown', function (e) {
+        if (view.scale <= 1 || !state.baseEntry || !state.baseEntry.done) return;
+        dragging = true; lastX = e.clientX; lastY = e.clientY;
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+        canvas.classList.add('gs-grabbing');
+      });
+      canvas.addEventListener('pointermove', function (e) {
+        if (!dragging) return;
+        var r = canvas.getBoundingClientRect(), ds = Math.min(r.width / canvas.width, r.height / canvas.height) || 1;
+        view.tx += (e.clientX - lastX) / ds; view.ty += (e.clientY - lastY) / ds;
+        lastX = e.clientX; lastY = e.clientY; clampView(); paint(state.index);
+      });
+      function endDrag(e) { if (dragging) { dragging = false; try { canvas.releasePointerCapture(e.pointerId); } catch (_) {} canvas.classList.remove('gs-grabbing'); } }
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('dblclick', function (e) { e.preventDefault(); resetView(); });
 
       /* ---------- export ---------- */
       function baseName() {

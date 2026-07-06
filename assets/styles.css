@@ -159,6 +159,9 @@ a { color: var(--cyan); }
    stretches to the stage, and object-fit keeps the whole disk visible and
    correctly proportioned (larger resolutions simply render sharper). */
 .gs-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.gs-canvas.gs-zoomed { cursor: grab; }
+.gs-canvas.gs-grabbing { cursor: grabbing; }
+.gs-zoomhint { margin-top: -4px; }
 
 /* first-visit empty state — SAME layout as the loaded workspace (selectors on
    top, controls on the left, viewport on the right). The selectors/panel show an
