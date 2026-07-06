@@ -2,8 +2,6 @@
 
 Turn a **SatDump GOES HRIT** output folder into animated, layered whole-disk views — entirely in your browser. Nothing is uploaded; the page reads your folder locally and does all decoding and rendering on your machine.
 
-![one unified view](https://img.shields.io/badge/view-base%20%2B%20layers%20%2B%20timeline-e3b356) ![runs](https://img.shields.io/badge/runs-100%25%20client--side-45d69a)
-
 > 🤖 **Co-authored with Claude.** This project was designed and built collaboratively with Anthropic's [Claude](https://claude.com/claude-code) (Claude Code). The git history reflects that — commits carry `Co-Authored-By: Claude` trailers.
 
 ## What it does
