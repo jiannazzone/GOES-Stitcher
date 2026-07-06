@@ -9,8 +9,10 @@ Turn a **SatDump GOES HRIT** output folder into animated, layered whole-disk vie
 One **view** that combines animation over *time* with compositing over *layers*:
 
 - **Base image** — pick any product (composite, raw ABI band, or L2) as the bottom layer, with an optional **coastline** overlay.
-- **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**.
-- **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. Burn in a UTC timestamp and **export an H.264 MP4** of the whole run (encoded in-browser, plays everywhere), or **save a PNG** of the current composite.
+- **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**, and a **colorbar legend** reproduced from SatDump's own LUT (with real units — numeric where NOAA's product range is known).
+- **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. **Deflicker** evens out the day/night brightness pulse. Burn in a UTC timestamp and **export an H.264 MP4** of the whole run (encoded in-browser, plays everywhere), or **save a PNG** of the current composite.
+- **Pan & zoom** — scroll to zoom into a feature, drag to pan, double-click to reset (raise the resolution for crisp deep zoom).
+- **Batch export** — check several products and render them all to MP4 in one pass, delivered as a single **ZIP**.
 
 It reads one shared, automatically-built index of your folder and caches every decoded frame, so switching base, toggling layers, and scrubbing stay instant — and **Prerender all** (on by default) decodes the whole region in the background up front.
 
@@ -62,6 +64,16 @@ The workspace is keyboard-driven, like the terminal tool it's dressed as:
 
 No build step, no bundler — just one small vendored library ([`mp4-muxer`](https://www.npmjs.com/package/mp4-muxer), MIT) checked into `src/vendor/` for MP4 export.
 
+## Sample data (optional)
+
+To let first-time visitors try the app without their own capture, drop a **downscaled** SatDump session under `samples/` (keep the `…/IMAGES|L2/<sat>/<region>/<time>/…` path tail), then regenerate the manifest:
+
+```bash
+node samples/build-manifest.mjs
+```
+
+A **try sample data** button then appears in the empty viewport *on the hosted site* — it's hidden on `file://`, where fetching bundled files is blocked. Keep each PNG **under 25 MB** (Cloudflare Pages' per-file limit): downscale full-disk frames (native 5424² are 15–35 MB each); ~1024–2048 px is plenty for a demo.
+
 ## What folders it understands
 
 SatDump writes something like:
@@ -89,6 +101,9 @@ SatDump writes something like:
 - **Exports are H.264 MP4**, encoded in your browser via WebCodecs — they play everywhere (QuickTime, iOS/Android, most social platforms) with no transcoding, and nothing is uploaded.
 - **Video caps at 2048²** because H.264 can't encode the native 5424² frame; PNG stills still export at whatever resolution you pick.
 - **Browser support:** MP4 export needs WebCodecs (recent Chrome/Edge, Safari 16.4+, Firefox 130+). Older browsers fall back to MediaRecorder — MP4 where the browser supports it, otherwise WebM. Playback and PNG export work everywhere (the app tells you if video export isn't available).
+- **Deflicker** smooths the brightness pulse as the day/night line crosses the disk — most useful on visible/false-color runs, harmless on IR.
+- **Pan & zoom** (scroll / drag / double-click) is a viewing aid on the working-resolution image, so deep zoom softens — raise **Resolution** for a crisp close-up. Exports stay full-disk.
+- **Level-2 colorbars** reproduce SatDump's LUT exactly. SatDump doesn't carry the value calibration, so numbers appear only where NOAA's standard range is verified (cloud-top temperature/height, rain rate); CAPE and TPW show a relative low→high scale.
 
 ## How it's built
 
@@ -99,10 +114,11 @@ Plain HTML/CSS/JS with a single vendored dependency ([`mp4-muxer`](https://www.n
 | `index.html` | markup + script includes |
 | `assets/styles.css` | terminal theme |
 | `assets/fonts/` | self-hosted mono webfonts |
-| `src/catalog.js` | ABI band + product metadata, display-name cleanup, glossary |
+| `src/catalog.js` | ABI band + product metadata, display-name cleanup, L2 colorbar scales, glossary |
 | `src/scanner.js` | folder → `session → sat → region → product → frames` index |
-| `src/imaging.js` | decode/downscale, compositing, MP4/video export, downloads |
-| `src/view.js` | the unified view (base + layers + timeline) |
+| `src/imaging.js` | decode/downscale, compositing, deflicker, MP4/video export, batch ZIP, downloads |
+| `src/samples.js` | optional "try sample data" loader (fetches bundled demo PNGs) |
+| `src/view.js` | the unified view — base + layers + timeline + deflicker + pan/zoom + batch + legend |
 | `src/app.js` | folder picking, selectors, view lifecycle, `GS.dom` / `GS.ui` |
 | `src/vendor/mp4-muxer.js` | vendored MP4 muxer ([mp4-muxer](https://www.npmjs.com/package/mp4-muxer), MIT) |
 
