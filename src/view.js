@@ -213,15 +213,26 @@
           if (!batchRunning) batchBtn.textContent = n ? ('Export ' + n + ' as ZIP') : 'Export selected as ZIP';
         };
 
+        // Lock the controls that could prune/replace the entries a batch is
+        // encoding (resolution/coastlines/base/layers) plus the single-export and
+        // prerender buttons, so a mid-batch change can't close a live ImageBitmap.
+        function setBatchLock(on) {
+          resSel.disabled = on; coastChk.disabled = on; prerenderBtn.disabled = on;
+          layerControls.forEach(function (lc) { lc.chk.disabled = on; lc.opacity.disabled = on; lc.blend.disabled = on; });
+          baseList.el.classList.toggle('gs-list-locked', on);
+          if (on) { vidBtn.disabled = true; pngBtn.disabled = true; }
+        }
+
         function runBatch() {
           var chosen = batchItems.filter(function (it) { return it.cb.checked; }).map(function (it) { return it.product; });
           if (!chosen.length || batchRunning) return;
           stop(); clearTimeout(autoTimer);
-          batchRunning = true; syncBatch();
+          batchRunning = true; syncBatch(); setBatchLock(true);
           var fpsVal = parseInt(fps.value, 10), ex = document.createElement('canvas'), results = [];
           progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%';
 
           function finish() {
+            setBatchLock(false);
             progWrap.style.display = 'none'; progText.style.display = 'none';
             updateTransport();
             if (!results.length) { batchRunning = false; syncBatch(); return; }
@@ -241,14 +252,15 @@
             buildEntry(entry, function (e, nf) {
               progBar.style.width = Math.round(((idx + nf / Math.max(1, e.frames.length)) / chosen.length) * 100) + '%';
             }).then(function () {
-              if (destroyed || entry.frames.length < 1) { chain(idx + 1); return; }
+              var idxs = validIndices(entry);
+              if (destroyed || !idxs.length) { chain(idx + 1); return; }
               batchBtn.textContent = 'Encoding ' + (idx + 1) + '/' + chosen.length + '…';
               return GS.imaging.exportVideo({
-                fps: fpsVal, count: entry.frames.length,
-                render: function (i) { renderComposite(ex, i, { base: entry, layers: false }); return ex; },
+                fps: fpsVal, count: idxs.length,
+                render: function (k) { renderComposite(ex, idxs[k], { base: entry, layers: false }); return ex; },
                 onProgress: function (d, t) { batchBtn.textContent = 'Encoding ' + (idx + 1) + '/' + chosen.length + '… ' + d + '/' + t; }
               }).then(function (res) {
-                results.push({ name: sanitize(ctx.satLabel.split(' ')[0] + '_' + region.id + '_' + p.name) + '_' + GS.imaging.stamp(entry.frames[0].time) + '_' + fpsVal + 'fps.' + res.ext, blob: res.blob });
+                results.push({ name: sanitize(ctx.satLabel.split(' ')[0] + '_' + region.id + '_' + p.name) + '_' + GS.imaging.stamp(entry.frames[idxs[0]].time) + '_' + fpsVal + 'fps.' + res.ext, blob: res.blob });
                 chain(idx + 1);
               });
             }).catch(function (e) { ctx.toast('Batch failed on ' + p.name + ': ' + e.message, 'error'); finish(); });
@@ -423,7 +435,7 @@
         if (!legendChk || !legendChk.checked) { legend.style.display = 'none'; return; }
         var shown = 0;
         layerControls.forEach(function (lc) {
-          if (!lc.chk.checked) return;
+          if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) return;
           var s = GS.catalog.l2Scale(lc.product.rawName);
           if (!s) return;
           shown++;
@@ -472,7 +484,7 @@
 
       /* ---------- prerender ---------- */
       function prerenderAll() {
-        if (state.prerendering) return;
+        if (state.prerendering || batchRunning) return;
         var base = selectedBase();
         var list = products.slice().sort(function (a, b) { return a === base ? -1 : b === base ? 1 : 0; });
         var total = list.length, done = 0;
@@ -524,9 +536,9 @@
       scrub.addEventListener('input', function () { stop(); paint(parseInt(scrub.value, 10)); });
 
       /* ---------- change handlers ---------- */
-      function onBaseChange() { var wp = state.playing; stop(); showScene(true).then(function () { if (wp && !destroyed) play(); }); }
-      function onDimChange() { resetView(); var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
-      function onLayerToggle(lc) { var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      function onBaseChange() { if (batchRunning) return; var wp = state.playing; stop(); showScene(true).then(function () { if (view.scale !== 1) { clampView(); paint(state.index); } if (wp && !destroyed) play(); }); }
+      function onDimChange() { if (batchRunning) return; resetView(); var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      function onLayerToggle(lc) { if (batchRunning) return; var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       coastChk.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
       deflickChk.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
@@ -590,6 +602,13 @@
       canvas.addEventListener('dblclick', function (e) { e.preventDefault(); resetView(); });
 
       /* ---------- export ---------- */
+      // Frame indices whose bitmap actually decoded; export skips holes so a
+      // failed decode never duplicates a frame or mis-sizes the clip.
+      function validIndices(entry) {
+        var out = [];
+        for (var i = 0; entry && i < entry.frames.length; i++) if (entry.bitmaps[i]) out.push(i);
+        return out;
+      }
       function baseName() {
         var b = state.baseEntry && state.baseEntry.product;
         var on = layerControls.filter(function (lc) { return lc.chk.checked; }).map(function (lc) { return lc.product.name.replace(/[^A-Za-z0-9]+/g, ''); }).join('+');
@@ -602,18 +621,19 @@
         GS.imaging.canvasToPng(ex).then(function (blob) { GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[state.index].time) + '.png'); });
       });
       vidBtn.addEventListener('click', function () {
-        if (!state.baseEntry || !state.baseEntry.done) return;
+        if (!state.baseEntry || !state.baseEntry.done || batchRunning) return;
         stop();
         var ex = document.createElement('canvas'), fpsVal = parseInt(fps.value, 10);
-        var nFrames = state.baseEntry.frames.length, restore = vidBtn.textContent;
+        var idxs = validIndices(state.baseEntry), restore = vidBtn.textContent;
+        if (!idxs.length) { ctx.toast('No decoded frames to export.', 'warn'); return; }
         vidBtn.disabled = true; vidBtn.textContent = 'Encoding…';
         GS.imaging.exportVideo({
-          fps: fpsVal, count: nFrames,
-          render: function (i) { renderComposite(ex, i); return ex; },
+          fps: fpsVal, count: idxs.length,
+          render: function (k) { renderComposite(ex, idxs[k]); return ex; },
           onProgress: function (d, t) { vidBtn.textContent = 'Encoding… ' + d + '/' + t; }
         }).then(function (res) {
-          GS.imaging.downloadBlob(res.blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[0].time) + '_' + fpsVal + 'fps.' + res.ext);
-          ctx.toast('Exported ' + res.encoder + ' (' + nFrames + ' frames @ ' + fpsVal + ' fps).', 'ok');
+          GS.imaging.downloadBlob(res.blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[idxs[0]].time) + '_' + fpsVal + 'fps.' + res.ext);
+          ctx.toast('Exported ' + res.encoder + ' (' + idxs.length + ' frames @ ' + fpsVal + ' fps).', 'ok');
         }).catch(function (e) { ctx.toast('Video export failed: ' + e.message, 'error'); })
           .then(function () { vidBtn.textContent = restore; vidBtn.disabled = false; updateTransport(); });
       });
@@ -625,7 +645,7 @@
         var t = e.target, tag = t && (t.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
         var k = e.key;
-        if (k === ' ' || k === 'Spacebar') { if (state.baseEntry && state.baseEntry.frames.length > 1) { state.playing ? stop() : play(); e.preventDefault(); } }
+        if (k === ' ' || k === 'Spacebar') { if (tag === 'button' || tag === 'summary' || tag === 'a') return; if (state.baseEntry && state.baseEntry.frames.length > 1) { state.playing ? stop() : play(); e.preventDefault(); } }
         else if (k === 'ArrowRight') { if (state.baseEntry && state.baseEntry.frames.length) { stop(); paint((state.index + 1) % state.baseEntry.frames.length); e.preventDefault(); } }
         else if (k === 'ArrowLeft') { if (state.baseEntry && state.baseEntry.frames.length) { stop(); paint((state.index - 1 + state.baseEntry.frames.length) % state.baseEntry.frames.length); e.preventDefault(); } }
         else if (k === 'ArrowDown') { baseList.next(true); e.preventDefault(); }

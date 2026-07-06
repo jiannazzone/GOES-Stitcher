@@ -28,7 +28,9 @@ function walk(dir, out) {
 
 const all = walk(here, [])
   .map((f) => relative(here, f).split('\\').join('/'))
-  .filter((p) => /(^|\/)(IMAGES|L2)\//.test(p))
+  // Match the scanner's exact shape: <IMAGES|L2>/<sat>/<region>/<UTC time>/<file>.png.
+  // A looser filter would list files the scanner then silently skips (wasted fetches).
+  .filter((p) => /(^|\/)(IMAGES|L2)\/[^/]+\/[^/]+\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\/[^/]+\.png$/i.test(p))
   .sort();
 
 writeFileSync(

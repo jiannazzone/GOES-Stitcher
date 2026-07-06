@@ -241,6 +241,7 @@ input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 .gs-list-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-list-row.is-sel .gs-list-label { color: #f5efe2; }
 .gs-list-meta { color: var(--amber); font-size: 11.5px; }
+.gs-list-locked { pointer-events: none; opacity: .5; }   /* base list during a batch */
 
 .gs-hint { font-size: 12px; color: var(--fg-faint); line-height: 1.55; margin-top: 8px; }
 .gs-hint b { color: var(--fg-dim); }
@@ -295,7 +296,9 @@ input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 /* No z-index: stays above the canvas by DOM order but below the About panel
    (#about z-index:1), so an active legend doesn't bleed over an open About. */
 .gs-legend { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 48%; pointer-events: none; }
-.gs-cbar { background: rgba(10, 8, 4, .74); border: 1px solid var(--line-lit); padding: 6px 8px; pointer-events: auto; }
+/* pointer-events stays none (inherited) so the legend doesn't block wheel-zoom /
+   drag-pan over its footprint in the bottom-right of the stage. */
+.gs-cbar { background: rgba(10, 8, 4, .74); border: 1px solid var(--line-lit); padding: 6px 8px; }
 .gs-cbar-name { font-size: 11px; color: var(--fg); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-cbar-track { height: 9px; border: 1px solid var(--line); }
 .gs-cbar-scale { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 3px; font-size: 10.5px; color: var(--fg-dim); }

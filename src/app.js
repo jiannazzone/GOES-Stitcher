@@ -348,11 +348,13 @@
 
     // Optional "try sample data" button — only shown when a samples/manifest.json
     // with files exists and we're not on file:// (relative fetch is blocked there).
-    var sampleBtn = q('sample-btn');
+    var sampleBtn = q('sample-btn'), sampleLoading = false;
     if (sampleBtn && GS.samples) {
       GS.samples.available().then(function (m) { if (m) sampleBtn.style.display = 'inline-flex'; });
       sampleBtn.addEventListener('click', function (e) {
         e.stopPropagation();
+        if (sampleLoading) return;                 // ignore repeat clicks while loading
+        sampleLoading = true; sampleBtn.disabled = true;
         var busy = q('busy'), busyText = busy && busy.lastElementChild;
         if (busyText) busyText.textContent = 'loading sample data';
         if (busy) busy.style.display = 'flex';
@@ -364,7 +366,7 @@
           if (busy) busy.style.display = 'none';
           if (busyText) busyText.textContent = 'reading folder';
           toast('Could not load sample data: ' + (err && err.message ? err.message : 'unavailable') + '.', 'error');
-        });
+        }).then(function () { sampleLoading = false; sampleBtn.disabled = false; });
       });
     }
 
