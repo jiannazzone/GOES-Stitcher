@@ -350,7 +350,8 @@
       // Per-frame brightness gains toward the median frame (computed once per entry,
       // clamped so it corrects flicker without blowing out a single dark frame).
       function ensureGains(entry) {
-        if (!entry || !entry.done || entry.gains) return;
+        if (!entry || !entry.done || entry.gainsComputed) return;
+        entry.gainsComputed = true;   // memoize even a null result (all-dark entry)
         var n = entry.bitmaps.length, means = new Array(n), i;
         for (i = 0; i < n; i++) { var b = entry.bitmaps[i]; means[i] = b ? frameMean(b) : 0; }
         var valid = means.filter(function (m) { return m > 1; }).sort(function (a, b) { return a - b; });
@@ -365,7 +366,7 @@
         var base = opts.base || state.baseEntry;
         var bb = base && base.bitmaps[i];
         if (!bb) return false;
-        if (deflickOn() && base.done && !base.gains) ensureGains(base);
+        if (deflickOn() && base.done && !base.gainsComputed) ensureGains(base);
         dest.width = bb.width; dest.height = bb.height;
         var cx = dest.getContext('2d');
         cx.clearRect(0, 0, dest.width, dest.height);
@@ -436,7 +437,7 @@
             ])
           ]));
         });
-        legend.style.display = shown ? 'block' : 'none';
+        legend.style.display = shown ? 'flex' : 'none';
       }
 
       /* ---------- assemble the scene (base + active layers) ---------- */
@@ -561,7 +562,10 @@
         if (!state.baseEntry || !state.baseEntry.done) return;
         e.preventDefault();
         var p = toCanvasPx(e); if (!p) return;
-        var ns = Math.max(1, Math.min(8, view.scale * Math.exp(-e.deltaY * 0.0015)));
+        // Normalize wheel delta by deltaMode (line/page vs pixel) so zoom isn't
+        // inert on browsers that report DOM_DELTA_LINE (e.g. Firefox).
+        var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? (canvas.clientHeight || 400) : 1);
+        var ns = Math.max(1, Math.min(8, view.scale * Math.exp(-dy * 0.0015)));
         if (ns === view.scale) return;
         view.tx = p.x - (ns / view.scale) * (p.x - view.tx);   // keep point under cursor fixed
         view.ty = p.y - (ns / view.scale) * (p.y - view.ty);

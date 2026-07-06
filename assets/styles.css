@@ -292,7 +292,9 @@ input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 .gs-mini { font-size: 11px; color: var(--fg-faint); text-transform: uppercase; letter-spacing: .5px; }
 
 /* ---------- L2 colorbar legend (stage overlay) ---------- */
-.gs-legend { position: absolute; right: 12px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; gap: 8px; max-width: 48%; pointer-events: none; }
+/* No z-index: stays above the canvas by DOM order but below the About panel
+   (#about z-index:1), so an active legend doesn't bleed over an open About. */
+.gs-legend { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 48%; pointer-events: none; }
 .gs-cbar { background: rgba(10, 8, 4, .74); border: 1px solid var(--line-lit); padding: 6px 8px; pointer-events: auto; }
 .gs-cbar-name { font-size: 11px; color: var(--fg); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-cbar-track { height: 9px; border: 1px solid var(--line); }

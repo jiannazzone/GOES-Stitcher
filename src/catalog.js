@@ -127,7 +127,7 @@
       stops: ['#c3c3c3', '#cfcfce', '#dadbda', '#e6e6e6', '#b763be', '#e623e8', '#ff4f00', '#ffed00', '#0cbf07', '#031eca', '#036fea'],
       note: 'Standard GOES-R product range (0–100 mm/hr); no per-frame calibration. Clear-sky is transparent/black.',
       source: 'NOAA GOES-R Enterprise Rainfall Rate ATBD v3' },
-    { id: 'cape', match: /CAPE|derived stability|\bDSI\b/i, units: 'J/kg', numeric: false,
+    { id: 'cape', match: /\bCAPE\b/i, units: 'J/kg', numeric: false,
       stops: ['#920ea0', '#7b0652', '#cd192d', '#ef4e3d', '#f4a94d', '#f8f700', '#a4a446', '#6f6eaf', '#a198c4', '#c5a890', '#93764b', '#523f21'],
       note: 'SatDump does not carry CAPE’s value scale, so this is a relative low→high gradient (units J/kg).',
       source: 'NOAA GOES-R Derived Stability Indices' },

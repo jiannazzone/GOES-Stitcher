@@ -360,10 +360,10 @@
           if (busy) busy.style.display = 'none';
           if (busyText) busyText.textContent = 'reading folder';
           loadFiles(files);
-        }).catch(function () {
+        }).catch(function (err) {
           if (busy) busy.style.display = 'none';
           if (busyText) busyText.textContent = 'reading folder';
-          toast('Sample data needs the hosted site or a local server (not file://).', 'error');
+          toast('Could not load sample data: ' + (err && err.message ? err.message : 'unavailable') + '.', 'error');
         });
       });
     }

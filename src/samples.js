@@ -15,7 +15,8 @@
   'use strict';
 
   var MANIFEST_URL = 'samples/manifest.json';
-  var cachedAvail = null;   // Promise<manifest|null>, resolved once
+  var cachedManifest = null;   // positive result only, cached for the session
+  var inflight = null;         // de-dupe concurrent probes
 
   function usable() {
     return typeof fetch === 'function' &&
@@ -23,16 +24,21 @@
   }
 
   // Resolves the manifest object if there's real sample data to load, else null.
+  // Only a positive result is cached, so a transient network/manifest failure
+  // can be retried (a permanently-cached null would hide the button forever).
   function available() {
-    if (cachedAvail) return cachedAvail;
-    if (!usable()) { cachedAvail = Promise.resolve(null); return cachedAvail; }
-    cachedAvail = fetch(MANIFEST_URL, { cache: 'no-store' })
+    if (cachedManifest) return Promise.resolve(cachedManifest);
+    if (!usable()) return Promise.resolve(null);
+    if (inflight) return inflight;
+    inflight = fetch(MANIFEST_URL, { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (m) {
-        return (m && Array.isArray(m.files) && m.files.length) ? m : null;
+        cachedManifest = (m && Array.isArray(m.files) && m.files.length) ? m : null;
+        inflight = null;
+        return cachedManifest;
       })
-      .catch(function () { return null; });
-    return cachedAvail;
+      .catch(function () { inflight = null; return null; });
+    return inflight;
   }
 
   function baseName(path) { var s = path.split('/'); return s[s.length - 1]; }
