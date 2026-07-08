@@ -172,6 +172,15 @@
   }
 
   /* ---------- drag & drop folder traversal ---------- */
+  // SatDump writes several non-image category folders alongside IMAGES/ and L2/
+  // (EMWIN text + weather charts, DCS reports, admin messages, …). They hold no
+  // ABI products but often thousands of tiny files, so when traversing a DROPPED
+  // folder we don't descend into them. Matched case-insensitively by folder name;
+  // none collide with a sat / region / timestamp segment. (The folder <input>
+  // can't be pruned this way — the browser enumerates the whole tree before it
+  // hands us the FileList; there we only surface the skipped count.)
+  var SKIP_DIRS = { emwin: 1, dcs: 1, 'admin messages': 1, 'additional data': 1, text: 1 };
+
   function readAllEntries(reader) {
     return new Promise(function (resolve, reject) {
       var out = [];
@@ -196,6 +205,7 @@
       });
     }
     if (entry.isDirectory) {
+      if (SKIP_DIRS[(entry.name || '').toLowerCase()]) return Promise.resolve();
       var reader = entry.createReader();
       return readAllEntries(reader).then(function (entries) {
         return Promise.all(entries.map(function (e) { return walkEntry(e, files); }));
@@ -293,7 +303,7 @@
     setText('panel-title', 'view');
     // Keep the "about" title while the panel is open, even across a region change.
     setText('stage-title', aboutOpen() ? 'about · goes-stitcher' : viewportTitle());
-    setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['b', 'prerender'], ['e', 'mp4'], ['s', 'png']]);
+    setKeys([['↑↓', 'base'], ['␣', 'play'], ['←→', 'time'], ['e', 'mp4'], ['s', 'png']]);
   }
 
   function mount() {
@@ -330,7 +340,8 @@
         App.sel = { run: res.defaultRun || 0, sat: 0, region: 0 };
         q('workspace').classList.remove('gs-empty');
         var summary = res.stats.runs + ' run' + (res.stats.runs > 1 ? 's' : '') +
-          ' · ' + res.stats.used.toLocaleString() + ' images indexed';
+          ' · ' + res.stats.used.toLocaleString() + ' images indexed' +
+          (res.stats.skipped ? ' · ' + res.stats.skipped.toLocaleString() + ' files skipped' : '');
         setText('st-summary', summary);
         q('repick').style.display = 'inline-flex';
         buildSelectors();

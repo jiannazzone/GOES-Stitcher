@@ -15,7 +15,7 @@ One **view** that combines animation over *time* with compositing over *layers*,
 - **Pan & zoom** — scroll to zoom into a feature, drag to pan, double-click to reset (raise the resolution for crisp deep zoom).
 - **Batch export** — check several products and render them all to MP4 in one pass, delivered as a single **ZIP**.
 
-It reads one shared, automatically-built index of your folder and caches every decoded frame, so switching base, toggling layers, and scrubbing stay instant — and **Prerender all** (on by default) decodes the whole region in the background up front.
+It reads one shared, automatically-built index of your folder and decodes frames **on demand** — only the base image and layers you're viewing are held in memory, so even a continuous multi-day capture stays light instead of trying to load the whole archive at once.
 
 Product names are cleaned up for readability (`Rain Rate Per Quarter Hour` → **Rainfall Rate (15 min)**), every control has a hover tooltip, and a **? about** panel explains the bands, products and data model with links to NOAA/NASA references.
 
@@ -46,7 +46,6 @@ The workspace is keyboard-driven, like the terminal tool it's dressed as:
 | `↑` / `↓` | change **base** image |
 | `space` | play / pause |
 | `←` / `→` | step through time |
-| `b` | prerender the whole region |
 | `e` | export MP4 · `s` save PNG |
 
 (Shortcuts are ignored while a dropdown or field is focused.)
