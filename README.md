@@ -6,8 +6,9 @@ Turn a **SatDump GOES HRIT** output folder into animated, layered whole-disk vie
 
 ## What it does
 
-One **view** that combines animation over *time* with compositing over *layers*:
+One **view** that combines animation over *time* with compositing over *layers*, fed by your whole SatDump archive:
 
+- **Whole-archive stitching** — point it at a folder of many capture sessions and it merges them all, then auto-splits the timeline into continuous **runs** (one per receiver-on window; a >2 h gap starts a new one), so a full day plays as a single clip. Roving **mesoscale** sectors are pinned to their real lat/lon (operators steer them at storms, so the slot number isn't a place), and the satellite you actually receive is kept apart from its sparse **relayed** passenger.
 - **Base image** — pick any product (composite, raw ABI band, or L2) as the bottom layer, with an optional **coastline** overlay.
 - **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**, and a **colorbar legend** reproduced from SatDump's own LUT (with real units — numeric where NOAA's product range is known).
 - **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. **Deflicker** evens out the day/night brightness pulse. Burn in a UTC timestamp and **export an H.264 MP4** of the whole run (encoded in-browser, plays everywhere), or **save a PNG** of the current composite.
@@ -120,7 +121,7 @@ The code was pair-programmed with Anthropic's **Claude** (Claude Code) — archi
 | `assets/styles.css` | terminal theme |
 | `assets/fonts/` | self-hosted mono webfonts |
 | `src/catalog.js` | ABI band + product metadata, display-name cleanup, L2 colorbar scales, glossary |
-| `src/scanner.js` | folder → `session → sat → region → product → frames` index |
+| `src/scanner.js` | folder → `run → sat → region → product → frames` index (gap-based run stitching; meso located from `product.cbor`) |
 | `src/imaging.js` | decode/downscale, compositing, deflicker, MP4/video export, batch ZIP, downloads |
 | `src/samples.js` | optional "try sample data" loader (fetches bundled demo PNGs) |
 | `src/view.js` | the unified view — base + layers + timeline + deflicker + pan/zoom + batch + legend |
