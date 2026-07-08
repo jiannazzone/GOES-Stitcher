@@ -141,14 +141,27 @@
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
   function hhmm(d) { return pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
 
-  // Human label for a reception run, e.g. "2026-07-04 · 16:30–18:37Z · 24 scans"
-  // (or a "date time → date time" form when the run crosses a UTC day).
-  function runLabel(start, end, count) {
+  // "2h 7m" / "53m" — floored to whole minutes so it agrees with the HH:MM span.
+  function humanDur(ms) {
+    var mins = Math.max(0, Math.floor(ms / 60000));
+    if (mins < 60) return mins + 'm';
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return m ? (h + 'h ' + m + 'm') : (h + 'h');
+  }
+
+  // Human label for a reception run, e.g. "2026-07-04 · 16:30–18:37Z · 2h 7m"
+  // (or a "date time → date time" form when the run crosses a UTC day). We show
+  // the run's time SPAN + duration — not a scan count — because a run aggregates
+  // products of different cadence, so no single number is the animation length
+  // (that's the per-product ×N in the base list). A single-instant run shows just
+  // its time.
+  function runLabel(start, end) {
     var sd = GS.imaging.formatDate(start), ed = GS.imaging.formatDate(end);
+    if (start.getTime() === end.getTime()) return sd + ' · ' + hhmm(start) + 'Z';
     var span = (sd === ed)
       ? sd + ' · ' + hhmm(start) + '–' + hhmm(end) + 'Z'
       : sd + ' ' + hhmm(start) + 'Z → ' + ed + ' ' + hhmm(end) + 'Z';
-    return span + ' · ' + count + ' scan' + (count === 1 ? '' : 's');
+    return span + ' · ' + humanDur(end - start);
   }
 
   // Split an ASCENDING array of scan-time ms into reception runs: any gap larger
@@ -307,8 +320,7 @@
         id: spanGaps ? 'run-all' : 'run-' + startMs,
         start: new Date(startMs), end: new Date(endMs),
         scanCount: count, spanGaps: !!spanGaps,
-        name: spanGaps ? ('All · span gaps · ' + count + ' scans')
-                       : runLabel(new Date(startMs), new Date(endMs), count),
+        name: spanGaps ? 'All · span gaps' : runLabel(new Date(startMs), new Date(endMs)),
         sats: sats
       };
     }
@@ -325,7 +337,9 @@
     // 5. Escape hatch: one merged timeline that spans gaps (only meaningful >1 run).
     var runs = realRuns;
     if (realRuns.length > 1) {
-      runs = realRuns.concat([buildRun(allTimes[0], allTimes[allTimes.length - 1], true)]);
+      var allRun = buildRun(allTimes[0], allTimes[allTimes.length - 1], true);
+      allRun.name = 'All · span gaps · ' + realRuns.length + ' runs';
+      runs = realRuns.concat([allRun]);
     }
 
     stats.runs = realRuns.length;
