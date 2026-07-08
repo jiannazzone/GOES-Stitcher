@@ -7,9 +7,10 @@
  * scans define the timeline, and every active layer snaps to its nearest frame in
  * time as you move, so base + layers animate together.
  *
- * Decoded frames are cached per (product, variant, resolution) and shared between
- * the base and the layers; "Prerender all" (and the auto pass) decode every
- * product so scrubbing and layer toggles stay instant. Exports composite each
+ * Frames are decoded on demand: only the on-screen base + active L2 layers are held
+ * as ImageBitmaps (cached per product/variant/resolution), and everything else is
+ * evicted, so memory stays flat regardless of run length. Layers get a smaller frame
+ * budget than the base (they snap to the nearest base frame). Exports composite each
  * frame: an MP4 over the whole timeline, PNG of the current composite.
  *
  * Exposed as GS.ViewMode.create(panelEl, stageEl, region, ctx) -> { destroy }.
@@ -60,12 +61,10 @@
       var el = GS.dom.el;
       var destroyed = false;
       var cache = {};                 // "productKey|variant|res" -> entry
-      var autoTimer = 0;
-      var prerenderStop = false;   // set to bail an in-flight prerender (e.g. on window change)
       var exporting = false;       // single MP4 export in flight — block cache-mutating controls
       var winTimer = 0;            // debounce for Range (time-window) commits
       var aboutEl = document.getElementById('about');   // cached; queried on every keydown
-      var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0, prerendering: false };
+      var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0 };
 
       // Deflicker uses ctx.filter='brightness(g)' per frame; feature-detect once
       // (older Safari ignores canvas filters). lumaCv samples frame brightness.
@@ -90,25 +89,16 @@
        * for fewer, sharper frames; lower it for more, softer ones. Thinning is an
        * even index-stride (not even-by-time), so `All · span gaps` spends frames
        * where data exists instead of on empty gaps. */
-      var MEM_TARGET = 1.5e9;   // ~1.5 GB of decoded bitmaps per entry (tunable)
+      var MEM_TARGET = 1.5e9;   // ~1.5 GB for the on-screen base entry (tunable)
+      var LAYER_MEM = 0.4e9;    // ~0.4 GB per active L2 layer (they snap to the base, so coarser is fine)
       var NATIVE_PX = /mesoscale/i.test(region.id) ? 2000 : 5424;   // native long-edge est.
       function frameWidthPx() { return resSel.value === 'native' ? NATIVE_PX : parseInt(resSel.value, 10); }
-      function frameBudget() {
+      function budgetFor(memTarget) {
         var w = frameWidthPx() || NATIVE_PX;
-        return Math.max(8, Math.min(1200, Math.floor(MEM_TARGET / (w * w * 4))));   // floor => hard ceiling
+        return Math.max(8, Math.min(1200, Math.floor(memTarget / (w * w * 4))));   // floor => hard ceiling
       }
-      // Total frames held resident if every product is prerendered at the current
-      // budget — playback/scrub/export are bounded per-entry, but prerender-all
-      // multiplies by product count, so surface it (see the prerender tooltip).
-      function residentFrames() {
-        var b = frameBudget(), t = 0, full = windowFull();
-        var lo = full ? 0 : runTimes[win.lo], hi = full ? 0 : runTimes[win.hi];
-        products.forEach(function (p) {
-          var n = full ? p.frames.length : p.frames.filter(function (f) { var x = f.time.getTime(); return x >= lo && x <= hi; }).length;
-          t += Math.min(n, b);
-        });
-        return t;
-      }
+      function frameBudget() { return budgetFor(MEM_TARGET); }
+      function layerBudget() { return Math.min(frameBudget(), budgetFor(LAYER_MEM)); }
       // Evenly-strided subsample of `arr` to at most `budget` items, first & last
       // kept; consecutive-dedup so a near-budget list never repeats a frame.
       function stridePick(arr, budget) {
@@ -223,8 +213,6 @@
       var deflickChk = el('input', { type: 'checkbox' });
       if (!CTX_FILTER_OK) deflickChk.disabled = true;
 
-      var prerenderBtn = el('button', { class: 'gs-btn gs-btn-primary', text: 'Prerender all · ' + products.length, title: 'Decode every product in this region up front, so switching base image and toggling layers stays instant.' });
-      var autoChk = el('input', { type: 'checkbox', checked: true });
       var progWrap = el('div', { class: 'gs-progress', style: { display: 'none' } });
       var progBar = el('div', { class: 'gs-progress-bar' });
       progWrap.appendChild(progBar);
@@ -278,7 +266,6 @@
         el('label', { class: 'gs-check', title: 'Burn a UTC timestamp caption into playback and exports.' }, [stampChk, ' Burn timestamp']),
         el('label', { class: 'gs-check', title: CTX_FILTER_OK ? 'Even out frame-to-frame brightness flicker (e.g. as the day/night terminator sweeps the disk). Normalizes the base layer toward the median frame; best on visible/false-color, harmless on IR.' : 'Deflicker needs a browser with canvas filter support.' }, [deflickChk, ' Deflicker'])
       ]));
-      panel.appendChild(el('div', { class: 'gs-field gs-prerender-row' }, [prerenderBtn, el('label', { class: 'gs-check', title: 'Prerender the whole region automatically in the background after you open it.' }, [autoChk, ' auto'])]));
       panel.appendChild(progWrap);
       panel.appendChild(progText);
 
@@ -323,10 +310,10 @@
         };
 
         // Lock the controls that could prune/replace the entries a batch is
-        // encoding (resolution/coastlines/base/layers) plus the single-export and
-        // prerender buttons, so a mid-batch change can't close a live ImageBitmap.
+        // encoding (resolution/coastlines/base/layers) plus the single-export
+        // button, so a mid-batch change can't close a live ImageBitmap.
         function setBatchLock(on) {
-          resSel.disabled = on; coastChk.disabled = on; prerenderBtn.disabled = on;
+          resSel.disabled = on; coastChk.disabled = on;
           if (fromEl) { fromEl.disabled = on; toEl.disabled = on; }
           layerControls.forEach(function (lc) { lc.chk.disabled = on; lc.opacity.disabled = on; lc.blend.disabled = on; });
           baseList.el.classList.toggle('gs-list-locked', on);
@@ -336,7 +323,7 @@
         function runBatch() {
           var chosen = batchItems.filter(function (it) { return it.cb.checked; }).map(function (it) { return it.product; });
           if (!chosen.length || batchRunning) return;
-          stop(); clearTimeout(autoTimer);
+          stop();
           batchRunning = true; syncBatch(); setBatchLock(true);
           var fpsVal = parseInt(fps.value, 10), ex = document.createElement('canvas'), results = [];
           progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%';
@@ -398,24 +385,28 @@
       stage.appendChild(legend);
 
       /* ---------- cache / build ---------- */
-      function framesFor(product, variant) {
+      function framesFor(product, variant, isLayer) {
         var fs = product.frames.filter(function (f) { return f.variants[variant]; });
         if (!fs.length && variant === 'map') fs = product.frames.filter(function (f) { return f.variants.plain; });
         var all = fs.map(function (f) { return { time: f.time, label: f.label, file: f.variants[variant] || f.variants.plain || f.variants.map }; });
-        // Restrict to the selected time window, then thin to the resolution budget.
+        // Restrict to the selected time window, then thin to the budget (layers get a
+        // smaller budget — they snap to the nearest base frame, so coarser is fine).
         var inWin = all;
         if (!windowFull() && runTimes.length) {
           var lo = runTimes[win.lo], hi = runTimes[win.hi];
           inWin = all.filter(function (f) { var t = f.time.getTime(); return t >= lo && t <= hi; });
         }
-        return stridePick(inWin, frameBudget());
+        return stridePick(inWin, isLayer ? layerBudget() : frameBudget());
       }
-      function keyFor(product, variant) { return product.key + '|' + variant + '|' + resSel.value; }
-      function getEntry(product, variant) {
-        var k = keyFor(product, variant);
+      // Resolution segment stays LAST so pruneCache's end-anchored suffix match holds;
+      // the '|L' marks a layer entry (smaller budget) so a product used as both base
+      // and layer never collides on frame count.
+      function keyFor(product, variant, isLayer) { return product.key + '|' + variant + (isLayer ? '|L' : '') + '|' + resSel.value; }
+      function getEntry(product, variant, isLayer) {
+        var k = keyFor(product, variant, isLayer);
         var e = cache[k];
         if (!e) {
-          var frames = framesFor(product, variant);
+          var frames = framesFor(product, variant, isLayer);
           e = { key: k, product: product, variant: variant, size: resSel.value === 'native' ? null : parseInt(resSel.value, 10), frames: frames, bitmaps: new Array(frames.length), done: frames.length === 0, promise: null };
           cache[k] = e;
         }
@@ -449,6 +440,11 @@
           if (k.indexOf(suffix, k.length - suffix.length) === -1) { closeEntry(cache[k]); delete cache[k]; }
         });
       }
+      // Keep-current-only: close every entry whose key isn't in `keep` (the on-screen
+      // base + active layers). Safe mid-decode via buildEntry's eviction guard.
+      function evictCache(keep) {
+        Object.keys(cache).forEach(function (k) { if (!keep[k]) { closeEntry(cache[k]); delete cache[k]; } });
+      }
       function nearestIndex(entry, t) {
         var best = 0, bd = Infinity;
         for (var i = 0; i < entry.frames.length; i++) { var d = Math.abs(entry.frames[i].time - t); if (d < bd) { bd = d; best = i; } }
@@ -460,7 +456,7 @@
       function activeLayerEntries() {
         var out = [];
         layerControls.forEach(function (lc) {
-          if (lc.chk.checked) { lc.entry = getEntry(lc.product, 'plain'); out.push(lc.entry); }
+          if (lc.chk.checked) { lc.entry = getEntry(lc.product, 'plain', true); out.push(lc.entry); }
         });
         return out;
       }
@@ -576,13 +572,6 @@
             (winActive ? ' (windowed).' : ' — raise Resolution for sharper detail, lower it for more frames.');
           budgetHint.style.display = 'block';
         }
-        // Refresh the prerender tooltip on every resolution/window change, but not
-        // during the prerender loop itself (O(products²) residentFrames + a hidden
-        // tooltip nobody can read).
-        if (!state.prerendering) {
-          prerenderBtn.title = 'Decode every product up front (~' + residentFrames() + ' frames resident at ' +
-            frameWidthPx() + ' px) so switching base image and toggling layers stays instant.';
-        }
       }
 
       // Color scale(s) for the active L2 layers — a DOM overlay in the stage (not
@@ -624,11 +613,15 @@
         }
 
         var needed = [base].concat(activeLayerEntries());
+        // Keep only the on-screen set resident (current base + active layers); free any
+        // previously-decoded base/layers now, before decoding new frames.
+        var keep = {}; needed.forEach(function (e) { keep[e.key] = 1; });
+        evictCache(keep);
         var toBuild = needed.filter(function (e) { return !e.done; });
         if (!toBuild.length) { stageMsg.style.display = 'none'; paint(state.index); updateTransport(); updateLegend(); return Promise.resolve(); }
 
         stageMsg.textContent = 'Decoding…'; stageMsg.style.display = 'block';
-        if (!state.prerendering) { progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%'; }
+        progWrap.style.display = 'block'; progText.style.display = 'block'; progBar.style.width = '0%';
         var done = 0, total = toBuild.length;
         return (function chain(idx) {
           if (destroyed || idx >= total) return Promise.resolve();
@@ -636,45 +629,14 @@
           return buildEntry(e, function (entry, nf) {
             if (state.baseEntry === entry && nf === 1) { stageMsg.style.display = 'none'; paint(0); }
             else if (state.baseEntry && state.baseEntry.done) paint(state.index);
-            if (!state.prerendering) { progBar.style.width = Math.round(((done + nf / e.frames.length) / total) * 100) + '%'; progText.textContent = 'Decoding ' + e.product.name + '…'; }
+            progBar.style.width = Math.round(((done + nf / e.frames.length) / total) * 100) + '%'; progText.textContent = 'Decoding ' + e.product.name + '…';
           }).then(function () { done++; return chain(idx + 1); });
         })(0).then(function () {
           if (destroyed) return;
-          if (!state.prerendering) { progWrap.style.display = 'none'; progText.style.display = 'none'; }
+          progWrap.style.display = 'none'; progText.style.display = 'none';
           stageMsg.style.display = 'none';
           paint(state.index); updateTransport(); updateLegend();
         });
-      }
-
-      /* ---------- prerender ---------- */
-      function prerenderAll() {
-        if (state.prerendering || batchRunning) return;
-        prerenderStop = false;
-        var base = selectedBase();
-        var list = products.slice().sort(function (a, b) { return a === base ? -1 : b === base ? 1 : 0; });
-        var total = list.length, done = 0;
-        state.prerendering = true; prerenderBtn.disabled = true; prerenderBtn.textContent = 'Prerendering…';
-        progWrap.style.display = 'block'; progText.style.display = 'block';
-        (function step(i) {
-          if (destroyed || prerenderStop) { finish(false); return; }
-          if (i >= list.length) { finish(true); return; }
-          progBar.style.width = Math.round((done / total) * 100) + '%';
-          progText.textContent = 'Prerendering ' + (done + 1) + ' / ' + total + ' · ' + list[i].name;
-          buildEntry(getEntry(list[i], 'plain'), function () {}).then(function () {
-            if (state.baseEntry && state.baseEntry.done) { updateTransport(); paint(state.index); }
-            done++; step(i + 1);
-          });
-        })(0);
-        function finish(ok) {
-          state.prerendering = false; prerenderBtn.disabled = false; prerenderBtn.textContent = 'Prerender all · ' + products.length;
-          progWrap.style.display = 'none'; progText.style.display = 'none';
-          if (ok) ctx.toast('Prerendered ' + total + ' product' + (total > 1 ? 's' : '') + '.', 'ok');
-        }
-      }
-      function scheduleAutoPrerender() {
-        clearTimeout(autoTimer);
-        if (!autoChk.checked || resSel.value === 'native') return;
-        autoTimer = setTimeout(function () { if (!destroyed && autoChk.checked && !state.prerendering && resSel.value !== 'native') prerenderAll(); }, 1000);
       }
 
       /* ---------- playback ---------- */
@@ -714,20 +676,13 @@
       function applyWindow() {
         if (destroyed || busy() || !fromEl) return;
         win.lo = +fromEl.value; win.hi = +toEl.value;   // commit the dragged handles
-        prerenderStop = true; clearTimeout(autoTimer);   // bail any in-flight/pending prerender
         var wp = state.playing; stop(); resetView(); resetAllEntries();
-        showScene(true).then(function () {
-          if (destroyed) return;
-          scheduleAutoPrerender();   // resume background prerender for the new window (also clears prerenderStop path)
-          if (wp) play();
-        });
+        showScene(true).then(function () { if (wp && !destroyed) play(); });
       }
       function onLayerToggle(lc) { if (busy()) return; var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       coastChk.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
       deflickChk.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
-      prerenderBtn.addEventListener('click', prerenderAll);
-      autoChk.addEventListener('change', function () { autoChk.checked ? scheduleAutoPrerender() : clearTimeout(autoTimer); });
 
       /* ---------- pan / zoom (viewport inspection) ---------- */
       // Viewing aid only: transforms the on-screen canvas; exports stay full-disk.
@@ -837,7 +792,6 @@
         else if (k === 'ArrowLeft') { if (state.baseEntry && state.baseEntry.frames.length) { stop(); paint((state.index - 1 + state.baseEntry.frames.length) % state.baseEntry.frames.length); e.preventDefault(); } }
         else if (k === 'ArrowDown') { baseList.next(true); e.preventDefault(); }
         else if (k === 'ArrowUp') { baseList.prev(true); e.preventDefault(); }
-        else if (k === 'b' || k === 'B') { if (!prerenderBtn.disabled) prerenderAll(); }
         else if (k === 'e' || k === 'E') { if (!vidBtn.disabled) vidBtn.click(); }
         else if (k === 's' || k === 'S') { if (!pngBtn.disabled) pngBtn.click(); }
       }
@@ -845,12 +799,11 @@
 
       /* ---------- init ---------- */
       showScene(true);
-      scheduleAutoPrerender();
 
       return {
         destroy: function () {
           destroyed = true;
-          clearTimeout(autoTimer); clearTimeout(winTimer);
+          clearTimeout(winTimer);
           document.removeEventListener('keydown', onKey);
           stop();
           Object.keys(cache).forEach(function (k) { closeEntry(cache[k]); });

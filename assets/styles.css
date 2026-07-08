@@ -255,8 +255,6 @@ input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 .gs-section-label::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 
 /* progress: blocky meter */
-.gs-prerender-row { flex-direction: row; align-items: center; gap: 12px; }
-
 .gs-progress { height: 14px; background: var(--bg-inset, #060807); border: 1px solid var(--line); margin-top: 12px; padding: 2px; }
 .gs-progress-bar { height: 100%; width: 0; background: repeating-linear-gradient(90deg, var(--acc) 0 7px, transparent 7px 9px); background-color: transparent; transition: width .1s linear; }
 
