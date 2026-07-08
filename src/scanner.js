@@ -164,6 +164,82 @@
     return span + ' · ' + humanDur(end - start);
   }
 
+  /* ---- Mesoscale sector location (from product.cbor) ----
+     Mesoscale 1/2 are just SLOT numbers, not places — operators steer the two
+     sectors at storms, so "Mesoscale 1" is a different geography on different
+     days. Every SatDump timestamp folder ships a product.cbor whose
+     projection_cfg carries the geostationary crop position; we read it to key
+     each meso frame by WHERE it looked, so stitching never splices locations. */
+
+  // Minimal CBOR decoder (maps/arrays/strings/ints/floats), DataView-based so it
+  // runs unchanged in the browser and in Node. Enough for SatDump's product.cbor.
+  function decodeCbor(ab) {
+    var dv = new DataView(ab), u8 = new Uint8Array(ab), pos = 0, td = new TextDecoder();
+    function rU(n) { var v = 0; for (var i = 0; i < n; i++) v = v * 256 + u8[pos++]; return v; }
+    function f16(h) { var s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+      if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
+      if (e === 31) return m ? NaN : s * Infinity;
+      return s * Math.pow(2, e - 15) * (1 + m / 1024); }
+    function dec() {
+      var ib = u8[pos++], major = ib >> 5, info = ib & 0x1f;
+      if (major === 7) {
+        if (info === 20) return false; if (info === 21) return true;
+        if (info === 22 || info === 23) return null;
+        if (info === 25) { var h = dv.getUint16(pos); pos += 2; return f16(h); }
+        if (info === 26) { var f = dv.getFloat32(pos); pos += 4; return f; }
+        if (info === 27) { var d = dv.getFloat64(pos); pos += 8; return d; }
+        return null;
+      }
+      var len;
+      if (info < 24) len = info; else if (info === 24) len = u8[pos++]; else if (info === 25) len = rU(2);
+      else if (info === 26) len = rU(4); else if (info === 27) len = rU(8); else len = 0;
+      if (major === 0) return len;
+      if (major === 1) return -1 - len;
+      if (major === 2) { var b = u8.subarray(pos, pos + len); pos += len; return b; }
+      if (major === 3) { var s = td.decode(u8.subarray(pos, pos + len)); pos += len; return s; }
+      if (major === 4) { var a = []; for (var i = 0; i < len; i++) a.push(dec()); return a; }
+      if (major === 5) { var o = {}; for (var j = 0; j < len; j++) { var k = dec(); o[k] = dec(); } return o; }
+      if (major === 6) return dec();
+    }
+    return dec();
+  }
+
+  // GOES-R fixed-grid inverse: scan angles (rad) -> lat/lon (deg). Validated
+  // against SatDump's coastline overlay (Chesapeake sector -> 38.2N 76.0W).
+  var REQ = 6378137, RPOL = 6356752.31414;
+  function invGeos(x, y, lon0, altitude) {
+    var H = altitude + REQ, r2 = (REQ * REQ) / (RPOL * RPOL);
+    var cx = Math.cos(x), sx = Math.sin(x), cy = Math.cos(y), sy = Math.sin(y);
+    var a = sx * sx + cx * cx * (cy * cy + r2 * sy * sy);
+    var b = -2 * H * cx * cy, c = H * H - REQ * REQ;
+    var disc = b * b - 4 * a * c; if (disc < 0) return null;
+    var rs = (-b - Math.sqrt(disc)) / (2 * a);
+    var Sx = rs * cx * cy, Sy = -rs * sx, Sz = rs * cx * sy;
+    return {
+      lat: Math.atan(r2 * Sz / Math.sqrt((H - Sx) * (H - Sx) + Sy * Sy)) * 180 / Math.PI,
+      lon: (lon0 * Math.PI / 180 - Math.atan2(Sy, H - Sx)) * 180 / Math.PI
+    };
+  }
+
+  // projection_cfg -> { posKey, lat, lon } for the crop CENTER, or null. In
+  // SatDump's cfg, pixel (0,0) maps to (offset_x, offset_y) and each pixel steps
+  // by (scalar_x, scalar_y) meters, so the center is offset + (w/2,h/2)*scalar.
+  function cfgToPos(cfg) {
+    if (!cfg || cfg.type !== 'geos' || cfg.offset_x == null || cfg.scalar_x == null) return null;
+    var alt = cfg.altitude || 35786023;
+    var cx = cfg.offset_x + (cfg.width / 2) * cfg.scalar_x;
+    var cy = cfg.offset_y + (cfg.height / 2) * cfg.scalar_y;
+    var ll = invGeos(cx / alt, cy / alt, cfg.lon0 || 0, alt);
+    if (!ll || !isFinite(ll.lat) || !isFinite(ll.lon)) return null;
+    // key on the corner rounded to the km — identical within a run, distinct across moves.
+    return { posKey: Math.round(cfg.offset_x / 1000) + ',' + Math.round(cfg.offset_y / 1000), lat: ll.lat, lon: ll.lon };
+  }
+
+  function latlonLabel(c) {
+    return Math.abs(c.lat).toFixed(1) + '°' + (c.lat >= 0 ? 'N' : 'S') + ' ' +
+           Math.abs(c.lon).toFixed(1) + '°' + (c.lon >= 0 ? 'E' : 'W');
+  }
+
   // Split an ASCENDING array of scan-time ms into reception runs: any gap larger
   // than breakMs starts a new run. Pure and deterministic. Returns [{startMs,endMs}].
   function detectRuns(sortedTimes, breakMs) {
@@ -213,11 +289,15 @@
         region.l2 = prodArr.filter(function (p) { return p.kind === 'l2'; });
         region.hasL2 = region.l2.length > 0;
         region.maxFrames = prodArr.reduce(function (m, p) { return Math.max(m, p.frames.length); }, 0);
+        // Display name: a roving meso sector shows WHERE it looked, not just its slot.
+        region.label = region.slot + (region.center ? ' · ' + latlonLabel(region.center) : '');
         regionArr.push(region);
       });
       regionArr.sort(function (a, b) {
-        var rr = regionRank(a.id) - regionRank(b.id);
-        return rr || a.id.localeCompare(b.id);
+        var rr = regionRank(a.slot) - regionRank(b.slot);
+        if (rr) return rr;
+        if (a.center && b.center) return (b.center.lat - a.center.lat) || (a.center.lon - b.center.lon);
+        return a.id.localeCompare(b.id);
       });
       sat.regions = regionArr;
       satArr.push(sat);
@@ -234,7 +314,7 @@
     var satMap = new Map();
     mergedSats.forEach(function (sat) {
       var regions = new Map();
-      sat.regions.forEach(function (region) {
+      sat.regions.forEach(function (region, regionKey) {
         var products = new Map();
         region.products.forEach(function (product) {
           var frames = new Map();
@@ -249,17 +329,50 @@
             });
           }
         });
-        if (products.size) regions.set(region.id, { id: region.id, products: products });
+        // Key by the merged region key (slot|position), so a meso sector that
+        // moved stays two separate regions in the span-gaps run.
+        if (products.size) regions.set(regionKey, { id: region.id, slot: region.slot, center: region.center, products: products });
       });
       if (regions.size) satMap.set(sat.id, { id: sat.id, label: sat.label, regions: regions });
     });
     return freezeSats(satMap);
   }
 
+  // scan() is async: mesoscale sector positions live in each folder's
+  // product.cbor, which we read (async) before building the index so meso
+  // regions can be keyed by geography. Non-meso datasets resolve with no reads.
   function scan(fileList) {
     var files = Array.prototype.slice.call(fileList || []);
     var stats = { total: files.length, used: 0, skipped: 0, runs: 0 };
 
+    // Index product.cbor by its folder; note which folders hold meso frames.
+    var cborByFolder = new Map();
+    var mesoFolders = new Set();
+    files.forEach(function (file) {
+      var rel = file.webkitRelativePath || file.relativePath || file.name;
+      var slash = rel.lastIndexOf('/');
+      var folder = slash >= 0 ? rel.slice(0, slash) : '';
+      if (/product\.cbor$/i.test(rel)) { cborByFolder.set(folder, file); return; }
+      var p = parsePath(rel);
+      if (p && /^Mesoscale/i.test(p.region)) mesoFolders.add(folder);
+    });
+
+    // Read each meso folder's cbor for the sector center (async, in parallel).
+    var posByFolder = new Map();
+    var reads = [];
+    mesoFolders.forEach(function (folder) {
+      var cbor = cborByFolder.get(folder);
+      if (!cbor || typeof cbor.arrayBuffer !== 'function') return;
+      reads.push(cbor.arrayBuffer().then(function (ab) {
+        try { var pos = cfgToPos((decodeCbor(ab) || {}).projection_cfg); if (pos) posByFolder.set(folder, pos); }
+        catch (e) { /* unreadable cbor: the sector just keeps its slot label */ }
+      }).catch(function () {}));
+    });
+
+    return Promise.all(reads).then(function () { return buildIndex(files, posByFolder, stats); });
+  }
+
+  function buildIndex(files, posByFolder, stats) {
     // 1. Merge every file into ONE sat -> region -> product -> frame tree, unioning
     //    across all session folders and deduping frames by (timeKey, variant).
     var mergedSats = new Map();
@@ -276,8 +389,17 @@
       var sat = ensure(mergedSats, p.sat, function () {
         return { id: p.sat, label: GS.catalog.satelliteLabel(p.sat), regions: new Map() };
       });
-      var region = ensure(sat.regions, p.region, function () {
-        return { id: p.region, products: new Map() };
+
+      // Meso regions key by (slot | position): a sector that moved becomes a
+      // distinct, separately-animatable region. Other regions key by name.
+      var pos = null, regionKey = p.region;
+      if (/^Mesoscale/i.test(p.region)) {
+        var slash = rel.lastIndexOf('/');
+        pos = posByFolder.get(slash >= 0 ? rel.slice(0, slash) : '') || null;
+        if (pos) regionKey = p.region + '|' + pos.posKey;
+      }
+      var region = ensure(sat.regions, regionKey, function () {
+        return { id: p.region, slot: p.region, center: pos, products: new Map() };
       });
       var product = ensure(region.products, c.key, function () {
         return {

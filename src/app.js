@@ -262,7 +262,7 @@
     host.appendChild(makeSelect('sel-region', 'Region',
       sat.regions.map(function (r, i) {
         var l2 = r.hasL2 ? ' · L2' : '';
-        return { value: i, label: r.id + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' product' + (r.products.length === 1 ? '' : 's') + l2 };
+        return { value: i, label: (r.label || r.id) + ' — ' + r.maxFrames + ' scan' + (r.maxFrames === 1 ? '' : 's') + ' · ' + r.products.length + ' product' + (r.products.length === 1 ? '' : 's') + l2 };
       }),
       App.sel.region, function (e) { App.sel.region = +e.target.value; buildSelectors(); mount(); }));
   }
@@ -320,22 +320,27 @@
     if (busy) busy.style.display = 'flex';
     // Let the browser paint the busy state before the (synchronous) scan.
     setTimeout(function () {
-      var res = GS.scanner.scan(files);
-      if (busy) busy.style.display = 'none';
-      if (!res.runs.length) {
-        toast('No GOES IMAGES/ or L2/ folders found here. Pick a SatDump session (or a folder that contains one).', 'error');
-        return;
-      }
-      App.data = res;
-      App.sel = { run: res.defaultRun || 0, sat: 0, region: 0 };
-      q('workspace').classList.remove('gs-empty');
-      var summary = res.stats.runs + ' run' + (res.stats.runs > 1 ? 's' : '') +
-        ' · ' + res.stats.used.toLocaleString() + ' images indexed';
-      setText('st-summary', summary);
-      q('repick').style.display = 'inline-flex';
-      buildSelectors();
-      mount();
-      toast('Loaded ' + summary + '.', 'ok');
+      GS.scanner.scan(files).then(function (res) {
+        if (busy) busy.style.display = 'none';
+        if (!res.runs.length) {
+          toast('No GOES IMAGES/ or L2/ folders found here. Pick a SatDump session (or a folder that contains one).', 'error');
+          return;
+        }
+        App.data = res;
+        App.sel = { run: res.defaultRun || 0, sat: 0, region: 0 };
+        q('workspace').classList.remove('gs-empty');
+        var summary = res.stats.runs + ' run' + (res.stats.runs > 1 ? 's' : '') +
+          ' · ' + res.stats.used.toLocaleString() + ' images indexed';
+        setText('st-summary', summary);
+        q('repick').style.display = 'inline-flex';
+        buildSelectors();
+        mount();
+        toast('Loaded ' + summary + '.', 'ok');
+      }).catch(function (err) {
+        if (busy) busy.style.display = 'none';
+        toast('Could not index that folder: ' + (err && err.message ? err.message : err), 'error');
+        if (window.console) console.error(err);
+      });
     }, 30);
   }
 

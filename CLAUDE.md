@@ -44,10 +44,11 @@ There is no test runner or linter. Verification is manual + ad-hoc.
 **Data model — `src/scanner.js`.** `GS.scanner.scan(FileList)` parses each file's
 `webkitRelativePath` (or `.relativePath` for drag-drop / synthetic files), finds the
 `IMAGES`/`L2` boundary, and requires **exactly 5 segments after it**
-(`category/sat/region/timeDir/file`). It returns `{ runs, primarySat, defaultRun, stats }`,
-where each **run** is `sat → region → product → frame` and a frame has
-`variants:{plain, map}` (`_map` = SatDump's coastline overlay). `abi_rgb_*` files are
-composites (IMAGES) or L2 products; `G##_<band>_…Z.png` are raw ABI bands.
+(`category/sat/region/timeDir/file`). It **returns a Promise** of
+`{ runs, primarySat, defaultRun, stats }` (async because it reads mesoscale
+`product.cbor` — see below), where each **run** is `sat → region → product → frame` and a
+frame has `variants:{plain, map}` (`_map` = SatDump's coastline overlay). `abi_rgb_*` files
+are composites (IMAGES) or L2 products; `G##_<band>_…Z.png` are raw ABI bands.
 
 **Folders don't define timelines — reception runs do.** SatDump writes a new session folder
 each time the receiver starts, so a whole day is split across folders (and unrelated days sit
@@ -60,6 +61,19 @@ scans is the `primary`; anything else (e.g. GOES-18's hourly Band-13 relay carri
 downlink) is a sparse `relayed` passenger, attributed to a run purely by timestamp — the relay
 schedule is never modelled. When >1 run exists, an `All · span gaps` run (whole archive, one
 timeline) trails the list, and `defaultRun` is the most-recent run with ≥3 scans.
+
+**Mesoscale sectors rove — key them by location, not slot number.** "Mesoscale 1"/"2" are
+just the two ABI meso *slots*; operators steer them at storms, so the same slot is a different
+place on different days. Merging by slot alone would splice unrelated geographies into one
+animation. So the scanner reads each meso folder's `product.cbor` (a minimal CBOR decoder +
+GOES-R inverse-geos live in `scanner.js`), takes the crop **center** (`offset_x/y` is the
+`(0,0)` corner; center = `offset + (w/2,h/2)·scalar`), and keys meso regions by
+`slot|position`. A moved sector becomes a **distinct region labelled by lat/lon** (`Mesoscale 1
+· 38.2°N 76.0°W`), so same-place frames stitch and different-place frames never merge — a real
+run has one meso position, `All · span gaps` shows each position separately. The math was
+validated against SatDump's coastline overlay (Chesapeake sector → 38.2°N 76.0°W). If a
+`product.cbor` is missing/unreadable (e.g. the sample loader), the sector falls back to its
+slot label. **This is the only reason `scan` is async.** Non-meso datasets do zero reads.
 
 **The one unified view — `src/view.js` (`GS.ViewMode.create(panel, stage, region, ctx)`).**
 There is a single `<canvas>`. **`renderComposite(dest, i, opts)` is the choke point for
