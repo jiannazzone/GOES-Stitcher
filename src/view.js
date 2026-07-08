@@ -61,6 +61,9 @@
       var destroyed = false;
       var cache = {};                 // "productKey|variant|res" -> entry
       var autoTimer = 0;
+      var prerenderStop = false;   // set to bail an in-flight prerender (e.g. on window change)
+      var exporting = false;       // single MP4 export in flight — block cache-mutating controls
+      var winTimer = 0;            // debounce for Range (time-window) commits
       var aboutEl = document.getElementById('about');   // cached; queried on every keydown
       var state = { baseEntry: null, index: 0, playing: false, raf: 0, acc: 0, last: 0, prerendering: false };
 
@@ -76,6 +79,71 @@
 
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
+
+      /* ---------- frame budget (memory + watchability) ----------
+       * A continuously-received run has no folder/gap boundary to split on, so a
+       * multi-day capture is legitimately ONE run with thousands of frames. We
+       * hold every base frame as a decoded ImageBitmap, so an un-capped run OOMs
+       * (a day of full-disk ≈ 144 × 16 MB at 2048 px ≈ 2.3 GB) long before it just
+       * "chugs". So each entry's frame list is thinned to a budget derived from
+       * bytes-per-frame — which makes RESOLUTION the memory/detail dial: raise it
+       * for fewer, sharper frames; lower it for more, softer ones. Thinning is an
+       * even index-stride (not even-by-time), so `All · span gaps` spends frames
+       * where data exists instead of on empty gaps. */
+      var MEM_TARGET = 1.5e9;   // ~1.5 GB of decoded bitmaps per entry (tunable)
+      var NATIVE_PX = /mesoscale/i.test(region.id) ? 2000 : 5424;   // native long-edge est.
+      function frameWidthPx() { return resSel.value === 'native' ? NATIVE_PX : parseInt(resSel.value, 10); }
+      function frameBudget() {
+        var w = frameWidthPx() || NATIVE_PX;
+        return Math.max(8, Math.min(1200, Math.floor(MEM_TARGET / (w * w * 4))));   // floor => hard ceiling
+      }
+      // Total frames held resident if every product is prerendered at the current
+      // budget — playback/scrub/export are bounded per-entry, but prerender-all
+      // multiplies by product count, so surface it (see the prerender tooltip).
+      function residentFrames() {
+        var b = frameBudget(), t = 0, full = windowFull();
+        var lo = full ? 0 : runTimes[win.lo], hi = full ? 0 : runTimes[win.hi];
+        products.forEach(function (p) {
+          var n = full ? p.frames.length : p.frames.filter(function (f) { var x = f.time.getTime(); return x >= lo && x <= hi; }).length;
+          t += Math.min(n, b);
+        });
+        return t;
+      }
+      // Evenly-strided subsample of `arr` to at most `budget` items, first & last
+      // kept; consecutive-dedup so a near-budget list never repeats a frame.
+      function stridePick(arr, budget) {
+        var n = arr.length;
+        if (n <= budget || budget < 2) return n <= budget ? arr : arr.slice(0, budget);
+        var out = [], last = -1;
+        for (var k = 0; k < budget; k++) {
+          var idx = Math.round(k * (n - 1) / (budget - 1));
+          if (idx !== last) { out.push(arr[idx]); last = idx; }
+        }
+        return out;
+      }
+
+      /* ---------- time window ----------
+       * A long run stays ONE run (that's correct — the receiver was on), but you
+       * rarely want the whole span at once. The window narrows the timeline to a
+       * sub-range; because the budget then covers fewer hours, the same memory
+       * buys higher cadence over the range (and exports just that range). Handles
+       * index the run's unique scan times (not linear ms) so empty gaps in an
+       * `All · span gaps` run collapse instead of eating handle travel. */
+      var runTimes = (function () {
+        var seen = {};
+        products.forEach(function (p) { p.frames.forEach(function (f) { seen[f.time.getTime()] = 1; }); });
+        return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+      })();
+      var win = { lo: 0, hi: Math.max(0, runTimes.length - 1) };
+      function windowFull() { return runTimes.length === 0 || (win.lo === 0 && win.hi === runTimes.length - 1); }
+      function pad2(n) { return (n < 10 ? '0' : '') + n; }
+      function winLabel(ms) { var d = new Date(ms); return GS.imaging.formatDate(d) + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + 'Z'; }
+      function humanDur(ms) {
+        var h = ms / 3.6e6;
+        if (h < 1) return Math.max(1, Math.round(ms / 6e4)) + ' min';
+        if (h < 48) return (h >= 10 ? Math.round(h) : h.toFixed(1)) + ' h';
+        return (h / 24).toFixed(1) + ' d';
+      }
 
       /* ---------- base picker ---------- */
       // Hover tooltip for a product: bands get their wavelength + what they show;
@@ -162,7 +230,48 @@
       progWrap.appendChild(progBar);
       var progText = el('div', { class: 'gs-hint', style: { display: 'none' } });
 
+      var budgetHint = el('div', { class: 'gs-hint', style: { display: 'none' } });
+      var fromEl = null, toEl = null, winField = null;   // window handles + their field
+
       panel.appendChild(el('div', { class: 'gs-section-label', text: 'timeline' }));
+
+      // Range control. Built whenever SOME resolution's budget could thin this run
+      // (min budget ≈ 12 frames at native), but hidden until it actually helps —
+      // see updateWindowVisibility. Short runs never surface it.
+      if (runTimes.length > 12) {
+        var maxIdx = runTimes.length - 1;
+        fromEl = el('input', { type: 'range', min: '0', max: String(maxIdx), value: '0', class: 'gs-range gs-range-sm' });
+        toEl = el('input', { type: 'range', min: '0', max: String(maxIdx), value: String(maxIdx), class: 'gs-range gs-range-sm' });
+        var fromLbl = el('span', { class: 'gs-num' });
+        var toLbl = el('span', { class: 'gs-num' });
+        var winSummary = el('div', { class: 'gs-hint' });
+        // Labels/summary reflect the LIVE handle positions; `win` itself is committed
+        // only in applyWindow (on release) so mid-drag decodes stay consistent.
+        var syncWinLabels = function () {
+          var lo = +fromEl.value, hi = +toEl.value, full = (lo === 0 && hi === maxIdx);
+          fromLbl.textContent = winLabel(runTimes[lo]);
+          toLbl.textContent = winLabel(runTimes[hi]);
+          var count = hi - lo + 1, shown = Math.min(count, frameBudget());
+          winSummary.textContent = humanDur(runTimes[hi] - runTimes[lo]) + ' · ' + count + ' scans' +
+            (shown < count ? ' → ~' + shown + ' shown' : '') + (full ? ' (full run)' : '');
+        };
+        // Keep a ≥2-frame window (from strictly below to) so playback/export never
+        // collapse to a dead single frame.
+        fromEl.addEventListener('input', function () { if (+fromEl.value >= +toEl.value) fromEl.value = String(Math.max(0, +toEl.value - 1)); syncWinLabels(); });
+        toEl.addEventListener('input', function () { if (+toEl.value <= +fromEl.value) toEl.value = String(Math.min(maxIdx, +fromEl.value + 1)); syncWinLabels(); });
+        fromEl.addEventListener('change', onWindowChange);
+        toEl.addEventListener('change', onWindowChange);
+        syncWinLabels();
+        winField = el('div', { class: 'gs-field', style: { display: 'none' } }, [
+          el('label', { class: 'gs-label', title: 'Limit the timeline to a sub-range of this run. Narrowing the window lets the frame budget cover fewer hours at higher cadence — same memory, more detail — and exports only the range.' }, ['Range']),
+          el('div', { class: 'gs-winrow' }, [el('span', { class: 'gs-mini', text: 'from' }), fromEl, fromLbl]),
+          el('div', { class: 'gs-winrow' }, [el('span', { class: 'gs-mini', text: 'to' }), toEl, toLbl]),
+          winSummary
+        ]);
+        panel.appendChild(winField);
+      }
+
+      panel.appendChild(budgetHint);
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', title: 'Playback and export frame rate.' }, ['Speed ', fpsOut]), fps]));
       panel.appendChild(el('div', { class: 'gs-field gs-checks' }, [
         el('label', { class: 'gs-check', title: 'Repeat playback from the start.' }, [loopChk, ' Loop']),
@@ -218,6 +327,7 @@
         // prerender buttons, so a mid-batch change can't close a live ImageBitmap.
         function setBatchLock(on) {
           resSel.disabled = on; coastChk.disabled = on; prerenderBtn.disabled = on;
+          if (fromEl) { fromEl.disabled = on; toEl.disabled = on; }
           layerControls.forEach(function (lc) { lc.chk.disabled = on; lc.opacity.disabled = on; lc.blend.disabled = on; });
           baseList.el.classList.toggle('gs-list-locked', on);
           if (on) { vidBtn.disabled = true; pngBtn.disabled = true; }
@@ -253,7 +363,9 @@
               progBar.style.width = Math.round(((idx + nf / Math.max(1, e.frames.length)) / chosen.length) * 100) + '%';
             }).then(function () {
               var idxs = validIndices(entry);
-              if (destroyed || !idxs.length) { chain(idx + 1); return; }
+              // Skip a product the window has thinned below 2 frames — a 1-frame
+              // clip in the ZIP is a degenerate export, not a time-lapse.
+              if (destroyed || idxs.length < 2) { chain(idx + 1); return; }
               batchBtn.textContent = 'Encoding ' + (idx + 1) + '/' + chosen.length + '…';
               return GS.imaging.exportVideo({
                 fps: fpsVal, count: idxs.length,
@@ -289,7 +401,14 @@
       function framesFor(product, variant) {
         var fs = product.frames.filter(function (f) { return f.variants[variant]; });
         if (!fs.length && variant === 'map') fs = product.frames.filter(function (f) { return f.variants.plain; });
-        return fs.map(function (f) { return { time: f.time, label: f.label, file: f.variants[variant] || f.variants.plain || f.variants.map }; });
+        var all = fs.map(function (f) { return { time: f.time, label: f.label, file: f.variants[variant] || f.variants.plain || f.variants.map }; });
+        // Restrict to the selected time window, then thin to the resolution budget.
+        var inWin = all;
+        if (!windowFull() && runTimes.length) {
+          var lo = runTimes[win.lo], hi = runTimes[win.hi];
+          inWin = all.filter(function (f) { var t = f.time.getTime(); return t >= lo && t <= hi; });
+        }
+        return stridePick(inWin, frameBudget());
       }
       function keyFor(product, variant) { return product.key + '|' + variant + '|' + resSel.value; }
       function getEntry(product, variant) {
@@ -308,10 +427,13 @@
         var i = 0;
         e.promise = new Promise(function (resolve) {
           (function next() {
-            if (destroyed) { resolve(e); return; }
+            // Bail if the entry was evicted from the cache mid-decode (resolution or
+            // window change): keep decoding into an orphaned entry and its bitmaps
+            // would never be reachable by any close path — a leak. Stop and close.
+            if (destroyed || cache[e.key] !== e) { resolve(e); return; }
             if (i >= e.frames.length) { e.done = true; resolve(e); return; }
             GS.imaging.decodeScaled(e.frames[i].file, e.size).then(function (bmp) {
-              if (destroyed) { if (bmp.close) bmp.close(); resolve(e); return; }
+              if (destroyed || cache[e.key] !== e) { if (bmp && bmp.close) bmp.close(); resolve(e); return; }
               e.bitmaps[i] = bmp; i++;
               if (onFrame) onFrame(e, i);
               next();
@@ -320,13 +442,11 @@
         });
         return e.promise;
       }
+      function closeEntry(e) { (e.bitmaps || []).forEach(function (b) { if (b && b.close) b.close(); }); }
       function pruneCache() {
         var suffix = '|' + resSel.value;   // resolution is in the key suffix
         Object.keys(cache).forEach(function (k) {
-          if (k.indexOf(suffix, k.length - suffix.length) === -1) {
-            (cache[k].bitmaps || []).forEach(function (b) { if (b && b.close) b.close(); });
-            delete cache[k];
-          }
+          if (k.indexOf(suffix, k.length - suffix.length) === -1) { closeEntry(cache[k]); delete cache[k]; }
         });
       }
       function nearestIndex(entry, t) {
@@ -392,7 +512,13 @@
         if (gain !== 1) cx.filter = 'none';
         var t = base.frames[i].time;
         if (opts.layers !== false) layerControls.forEach(function (lc) {
-          if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) { if (!lc.chk.checked) lc.timeTag.textContent = ''; return; }
+          if (!lc.chk.checked || !lc.entry || !lc.entry.done || !lc.entry.frames.length) {
+            // Unchecked → blank; checked but no frames in the current window → say so
+            // (else the tag keeps a stale timestamp for a layer that isn't drawing).
+            if (!lc.chk.checked) lc.timeTag.textContent = '';
+            else if (lc.entry && lc.entry.done && !lc.entry.frames.length) lc.timeTag.textContent = 'out of range';
+            return;
+          }
           var ni = nearestIndex(lc.entry, t), lb = lc.entry.bitmaps[ni];
           if (!lb) return;
           cx.globalCompositeOperation = lc.blend.value || 'screen';
@@ -424,6 +550,39 @@
         pngBtn.disabled = !ready;
         vidBtn.disabled = !(multi && GS.imaging.supportsVideoExport());
         transport.style.display = ready ? 'block' : 'none';
+        updateBudgetHint();
+        updateWindowVisibility();
+      }
+
+      // Offer the Range control exactly when it helps: the run is long, OR the
+      // current resolution's budget is actually thinning it (so a sub-range would
+      // raise cadence). Keeps short runs at low res free of the control.
+      function updateWindowVisibility() {
+        if (!winField) return;
+        var show = runTimes.length > 120 || runTimes.length > frameBudget();
+        winField.style.display = show ? 'block' : 'none';
+      }
+
+      // When the run is bigger than the budget, say so honestly: the base picker
+      // still shows the archive-true total (×N); this shows the working count.
+      function updateBudgetHint() {
+        var base = selectedBase();
+        var archived = base ? base.frames.length : 0;
+        var shown = state.baseEntry ? state.baseEntry.frames.length : 0;
+        if (!base || archived <= shown) { budgetHint.style.display = 'none'; }
+        else {
+          var winActive = !!fromEl && !windowFull();
+          budgetHint.textContent = 'Showing ' + shown + ' of ' + archived + ' frames @ ' + frameWidthPx() + ' px' +
+            (winActive ? ' (windowed).' : ' — raise Resolution for sharper detail, lower it for more frames.');
+          budgetHint.style.display = 'block';
+        }
+        // Refresh the prerender tooltip on every resolution/window change, but not
+        // during the prerender loop itself (O(products²) residentFrames + a hidden
+        // tooltip nobody can read).
+        if (!state.prerendering) {
+          prerenderBtn.title = 'Decode every product up front (~' + residentFrames() + ' frames resident at ' +
+            frameWidthPx() + ' px) so switching base image and toggling layers stays instant.';
+        }
       }
 
       // Color scale(s) for the active L2 layers — a DOM overlay in the stage (not
@@ -457,7 +616,12 @@
         var base = getEntry(selectedBase(), curVariant());
         state.baseEntry = base;
         if (resetIndex || state.index >= base.frames.length) state.index = 0;
-        if (!base.frames.length) { stageMsg.textContent = 'No frames for this base.'; stageMsg.style.display = 'block'; updateTransport(); return Promise.resolve(); }
+        if (!base.frames.length) {
+          stageMsg.textContent = (fromEl && !windowFull())
+            ? 'No frames for this product in the selected range — widen the Range or pick a denser product.'
+            : 'No frames for this base.';
+          stageMsg.style.display = 'block'; updateTransport(); return Promise.resolve();
+        }
 
         var needed = [base].concat(activeLayerEntries());
         var toBuild = needed.filter(function (e) { return !e.done; });
@@ -485,13 +649,14 @@
       /* ---------- prerender ---------- */
       function prerenderAll() {
         if (state.prerendering || batchRunning) return;
+        prerenderStop = false;
         var base = selectedBase();
         var list = products.slice().sort(function (a, b) { return a === base ? -1 : b === base ? 1 : 0; });
         var total = list.length, done = 0;
         state.prerendering = true; prerenderBtn.disabled = true; prerenderBtn.textContent = 'Prerendering…';
         progWrap.style.display = 'block'; progText.style.display = 'block';
         (function step(i) {
-          if (destroyed) { finish(false); return; }
+          if (destroyed || prerenderStop) { finish(false); return; }
           if (i >= list.length) { finish(true); return; }
           progBar.style.width = Math.round((done / total) * 100) + '%';
           progText.textContent = 'Prerendering ' + (done + 1) + ' / ' + total + ' · ' + list[i].name;
@@ -536,9 +701,28 @@
       scrub.addEventListener('input', function () { stop(); paint(parseInt(scrub.value, 10)); });
 
       /* ---------- change handlers ---------- */
-      function onBaseChange() { if (batchRunning) return; var wp = state.playing; stop(); showScene(true).then(function () { if (view.scale !== 1) { clampView(); paint(state.index); } if (wp && !destroyed) play(); }); }
-      function onDimChange() { if (batchRunning) return; resetView(); var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
-      function onLayerToggle(lc) { if (batchRunning) return; var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      // All of these mutate the decode cache; block them while a single export is
+      // encoding (it reads bitmaps that pruneCache/resetAllEntries would close).
+      function busy() { return batchRunning || exporting; }
+      function onBaseChange() { if (busy()) return; var wp = state.playing; stop(); showScene(true).then(function () { if (view.scale !== 1) { clampView(); paint(state.index); } if (wp && !destroyed) play(); }); }
+      function onDimChange() { if (busy()) return; resetView(); var wp = state.playing; stop(); pruneCache(); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
+      // Close and drop EVERY cached entry (window changes every entry's frame list).
+      function resetAllEntries() { Object.keys(cache).forEach(function (k) { closeEntry(cache[k]); delete cache[k]; }); }
+      // Range inputs fire `change` per arrow-step and per drag-release; coalesce a
+      // burst into ONE rebuild, and commit the window only when we actually apply.
+      function onWindowChange() { if (busy()) return; clearTimeout(winTimer); winTimer = setTimeout(applyWindow, 150); }
+      function applyWindow() {
+        if (destroyed || busy() || !fromEl) return;
+        win.lo = +fromEl.value; win.hi = +toEl.value;   // commit the dragged handles
+        prerenderStop = true; clearTimeout(autoTimer);   // bail any in-flight/pending prerender
+        var wp = state.playing; stop(); resetView(); resetAllEntries();
+        showScene(true).then(function () {
+          if (destroyed) return;
+          scheduleAutoPrerender();   // resume background prerender for the new window (also clears prerenderStop path)
+          if (wp) play();
+        });
+      }
+      function onLayerToggle(lc) { if (busy()) return; var wp = state.playing; stop(); lc.row.classList.toggle('gs-layer-on', lc.chk.checked); showScene(false).then(function () { if (wp && !destroyed) play(); }); }
       coastChk.addEventListener('change', onDimChange);
       resSel.addEventListener('change', onDimChange);
       deflickChk.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
@@ -621,11 +805,14 @@
         GS.imaging.canvasToPng(ex).then(function (blob) { GS.imaging.downloadBlob(blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[state.index].time) + '.png'); });
       });
       vidBtn.addEventListener('click', function () {
-        if (!state.baseEntry || !state.baseEntry.done || batchRunning) return;
+        if (!state.baseEntry || !state.baseEntry.done || batchRunning || exporting) return;
         stop();
         var ex = document.createElement('canvas'), fpsVal = parseInt(fps.value, 10);
         var idxs = validIndices(state.baseEntry), restore = vidBtn.textContent;
         if (!idxs.length) { ctx.toast('No decoded frames to export.', 'warn'); return; }
+        // Lock cache-mutating controls (resolution/base/layers/window) while the
+        // encoder reads these exact bitmaps — else a mid-encode change closes them.
+        exporting = true; if (fromEl) { fromEl.disabled = true; toEl.disabled = true; }
         vidBtn.disabled = true; vidBtn.textContent = 'Encoding…';
         GS.imaging.exportVideo({
           fps: fpsVal, count: idxs.length,
@@ -635,7 +822,7 @@
           GS.imaging.downloadBlob(res.blob, baseName() + '_' + GS.imaging.stamp(state.baseEntry.frames[idxs[0]].time) + '_' + fpsVal + 'fps.' + res.ext);
           ctx.toast('Exported ' + res.encoder + ' (' + idxs.length + ' frames @ ' + fpsVal + ' fps).', 'ok');
         }).catch(function (e) { ctx.toast('Video export failed: ' + e.message, 'error'); })
-          .then(function () { vidBtn.textContent = restore; vidBtn.disabled = false; updateTransport(); });
+          .then(function () { exporting = false; if (fromEl) { fromEl.disabled = false; toEl.disabled = false; } vidBtn.textContent = restore; vidBtn.disabled = false; updateTransport(); });
       });
 
       /* ---------- keyboard ---------- */
@@ -663,10 +850,10 @@
       return {
         destroy: function () {
           destroyed = true;
-          clearTimeout(autoTimer);
+          clearTimeout(autoTimer); clearTimeout(winTimer);
           document.removeEventListener('keydown', onKey);
           stop();
-          Object.keys(cache).forEach(function (k) { (cache[k].bitmaps || []).forEach(function (b) { if (b && b.close) b.close(); }); });
+          Object.keys(cache).forEach(function (k) { closeEntry(cache[k]); });
         }
       };
     }

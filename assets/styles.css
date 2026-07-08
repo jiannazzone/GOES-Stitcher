@@ -291,6 +291,9 @@ input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 .gs-layer-time { font-size: 11px; color: var(--amber); }
 .gs-layer-ctl { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
 .gs-mini { font-size: 11px; color: var(--fg-faint); text-transform: uppercase; letter-spacing: .5px; }
+.gs-winrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.gs-winrow .gs-mini { width: 30px; flex: none; }
+.gs-winrow .gs-num { white-space: nowrap; }
 
 /* ---------- L2 colorbar legend (stage overlay) ---------- */
 /* No z-index: stays above the canvas by DOM order but below the About panel
