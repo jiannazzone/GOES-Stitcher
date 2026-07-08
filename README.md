@@ -21,7 +21,7 @@ Product names are cleaned up for readability (`Rain Rate Per Quarter Hour` → *
 ## Use it
 
 ### Hosted (recommended) https://goes.k2cat.xyz
-Open the deployed page [here](https://goes.k2cat.xyz) and click **Choose folder…** (or drag a folder onto it), then point it at a SatDump session — e.g. `2026-07-04_17-10_goes_hrit_1.6941 GHz` — **or** at a parent folder containing several sessions (each is detected).
+Open the deployed page [here](https://goes.k2cat.xyz) and click **Choose folder…** (or drag a folder onto it), then point it at a SatDump session — e.g. `2026-07-04_17-10_goes_hrit_1.6941 GHz` — **or** at a parent folder holding many sessions: captures are auto-stitched into continuous **runs** (one per receiver-on window), so a whole day plays as a single timeline.
 
 > Folder access uses the standard `<input webkitdirectory>` picker: the browser reads files locally and **does not upload** them.
 
@@ -92,6 +92,8 @@ SatDump writes something like:
 ```
 
 - Time comes from the scan-time folder name (UTC). `_map` files are the coastline-overlaid variant.
+- **Sessions are stitched into runs.** SatDump starts a new folder each capture, so the app ignores folder boundaries and segments everything by scan-time gaps into **reception runs** — a gap over **2 hours** starts a new run, so two adjacent folders from one continuous capture merge while day-apart captures stay separate. Pick a run from the **Run** selector, or **All · span gaps** to force the whole archive into one timeline.
+- **Relayed satellites.** On a GOES-19 (East) HRIT downlink you'll see occasional GOES-18 (West) frames — its hourly Band-13 relay. The satellite you actually receive (the one with the most scans) is the *primary*; the other is marked **· relayed** and never auto-selected, since it's far too sparse to animate on its own.
 - Grayscale single-band L2 duplicates (`G19_ACHT_…`), `product.cbor`, stray `… copy.png`, and non-standard folders (e.g. `NWS/`) are ignored.
 - **Note:** layers of different native resolutions (e.g. 5424² vs 1086²) line up because all full-disk products share the same earth extent; they're scaled to a common working canvas.
 

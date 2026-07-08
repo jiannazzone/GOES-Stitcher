@@ -44,10 +44,22 @@ There is no test runner or linter. Verification is manual + ad-hoc.
 **Data model — `src/scanner.js`.** `GS.scanner.scan(FileList)` parses each file's
 `webkitRelativePath` (or `.relativePath` for drag-drop / synthetic files), finds the
 `IMAGES`/`L2` boundary, and requires **exactly 5 segments after it**
-(`category/sat/region/timeDir/file`). It builds `session → sat → region → product → frame`,
-where a frame has `variants:{plain, map}` (`_map` = SatDump's coastline overlay). `abi_rgb_*`
-files are composites (IMAGES) or L2 products; `G##_<band>_…Z.png` are raw ABI bands. A "session"
-is any folder directly containing `IMAGES/` or `L2/`, so a parent of several sessions works.
+(`category/sat/region/timeDir/file`). It returns `{ runs, primarySat, defaultRun, stats }`,
+where each **run** is `sat → region → product → frame` and a frame has
+`variants:{plain, map}` (`_map` = SatDump's coastline overlay). `abi_rgb_*` files are
+composites (IMAGES) or L2 products; `G##_<band>_…Z.png` are raw ABI bands.
+
+**Folders don't define timelines — reception runs do.** SatDump writes a new session folder
+each time the receiver starts, so a whole day is split across folders (and unrelated days sit
+side by side). The scanner **ignores folder boundaries**: it merges every file into one
+`sat → region → product` tree (deduped by scan-time + variant), then `detectRuns` segments the
+**union of all scan times** into runs — maximal stretches with no gap larger than `BREAK_MS`
+(2 h). A run is one continuous "receiver was on" window, so two adjacent folders that form a
+contiguous capture become one run while day-apart captures split. The satellite with the most
+scans is the `primary`; anything else (e.g. GOES-18's hourly Band-13 relay carried on a GOES-19
+downlink) is a sparse `relayed` passenger, attributed to a run purely by timestamp — the relay
+schedule is never modelled. When >1 run exists, an `All · span gaps` run (whole archive, one
+timeline) trails the list, and `defaultRun` is the most-recent run with ≥3 scans.
 
 **The one unified view — `src/view.js` (`GS.ViewMode.create(panel, stage, region, ctx)`).**
 There is a single `<canvas>`. **`renderComposite(dest, i, opts)` is the choke point for
@@ -73,8 +85,9 @@ NOAA's product range is verified** (cloud-top temperature/height, rain rate); CA
 qualitative. Do not invent value scales — SatDump discards the count→value calibration.
 
 **Shell — `src/app.js` (`GS.app`).** Folder pick + drag-drop → `loadFiles(files)` →
-`GS.scanner.scan` → builds the session/sat/region selectors → mounts a fresh `ViewMode` per
-region (destroying the previous one). `GS.samples.load()` reuses this exact `loadFiles` path by
+`GS.scanner.scan` → builds the run/sat/region selectors (the **Run** dropdown appears only when
+>1 run; relayed satellites are marked `· relayed` and never auto-selected) → mounts a fresh
+`ViewMode` per region (destroying the previous one). `GS.samples.load()` reuses this exact `loadFiles` path by
 fetching bundled PNGs and wrapping them as `File`s with a synthetic `relativePath`, so the
 scanner needs no special case. Also defines the shared `GS.dom.el/clear` and `GS.ui.list` widgets.
 

@@ -1,5 +1,5 @@
 /*
- * app.js — the shell: folder picking (input + drag-drop), the session / satellite
+ * app.js — the shell: folder picking (input + drag-drop), the run / satellite
  * / region selectors, the mode tabs, and the mount/unmount lifecycle for the two
  * modes. Also defines the tiny GS.dom helper used by every module at mount time.
  *
@@ -220,7 +220,7 @@
   /* ---------- app state ---------- */
   var App = {
     data: null,
-    sel: { session: 0, sat: 0, region: 0 },
+    sel: { run: 0, sat: 0, region: 0 },
     mode: null // active mode instance
   };
 
@@ -228,9 +228,9 @@
 
   function currentRegion() {
     if (!App.data) return null;
-    var s = App.data.sessions[App.sel.session]; if (!s) return null;
-    var sat = s.sats[App.sel.sat]; if (!sat) return null;
-    return { session: s, sat: sat, region: sat.regions[App.sel.region] || null };
+    var r = App.data.runs[App.sel.run]; if (!r) return null;
+    var sat = r.sats[App.sel.sat]; if (!sat) return null;
+    return { run: r, sat: sat, region: sat.regions[App.sel.region] || null };
   }
 
   function makeSelect(id, label, options, value, onChange) {
@@ -246,19 +246,19 @@
     clear(host);
     var d = App.data;
 
-    // Session (only if more than one)
-    if (d.sessions.length > 1) {
-      host.appendChild(makeSelect('sel-session', 'Session',
-        d.sessions.map(function (s, i) { return { value: i, label: s.name }; }),
-        App.sel.session, function (e) { App.sel.session = +e.target.value; App.sel.sat = 0; App.sel.region = 0; buildSelectors(); mount(); }));
+    // Reception run (only if more than one; "All · span gaps" trails the real runs)
+    if (d.runs.length > 1) {
+      host.appendChild(makeSelect('sel-run', 'Run',
+        d.runs.map(function (r, i) { return { value: i, label: r.name }; }),
+        App.sel.run, function (e) { App.sel.run = +e.target.value; App.sel.sat = 0; App.sel.region = 0; buildSelectors(); mount(); }));
     }
 
-    var session = d.sessions[App.sel.session];
+    var run = d.runs[App.sel.run];
     host.appendChild(makeSelect('sel-sat', 'Satellite',
-      session.sats.map(function (s, i) { return { value: i, label: s.label }; }),
+      run.sats.map(function (s, i) { return { value: i, label: s.role === 'relayed' ? (s.label + ' · relayed') : s.label }; }),
       App.sel.sat, function (e) { App.sel.sat = +e.target.value; App.sel.region = 0; buildSelectors(); mount(); }));
 
-    var sat = session.sats[App.sel.sat];
+    var sat = run.sats[App.sel.sat];
     host.appendChild(makeSelect('sel-region', 'Region',
       sat.regions.map(function (r, i) {
         var l2 = r.hasL2 ? ' · L2' : '';
@@ -322,14 +322,14 @@
     setTimeout(function () {
       var res = GS.scanner.scan(files);
       if (busy) busy.style.display = 'none';
-      if (!res.sessions.length) {
+      if (!res.runs.length) {
         toast('No GOES IMAGES/ or L2/ folders found here. Pick a SatDump session (or a folder that contains one).', 'error');
         return;
       }
       App.data = res;
-      App.sel = { session: 0, sat: 0, region: 0 };
+      App.sel = { run: res.defaultRun || 0, sat: 0, region: 0 };
       q('workspace').classList.remove('gs-empty');
-      var summary = res.stats.sessions + ' session' + (res.stats.sessions > 1 ? 's' : '') +
+      var summary = res.stats.runs + ' run' + (res.stats.runs > 1 ? 's' : '') +
         ' · ' + res.stats.used.toLocaleString() + ' images indexed';
       setText('st-summary', summary);
       q('repick').style.display = 'inline-flex';
