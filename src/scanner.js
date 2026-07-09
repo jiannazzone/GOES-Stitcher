@@ -28,6 +28,20 @@
   var TIME_DIR_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$/;
   var CHANNEL_FILE_RE = /^G\d+_([A-Za-z0-9]+)_\d{8}T\d{6}Z$/;
 
+  // EMWIN imagery filename (WMO/EMWIN convention), e.g.
+  //   Z_QATA00KWBC080245_C_KWIN_20260708144607_477813-3-RADREFUS.GIF
+  // The reliable frame time is the full ISO stamp after "_KWIN_" (the WMO header
+  // DDHHMM is nominal, not reception); the trailing token is the product code —
+  // the SERIES key (same chart, over and over). Captures: [1]=YYYYMMDDHHMMSS,
+  // [2]=product code.
+  var EMWIN_IMG_RE = /_KWIN_(\d{14})_\d+-\d+-([A-Za-z0-9]+)\.(?:gif|jpe?g|png)$/i;
+
+  // An EMWIN image product must recur at least this many times to count as a
+  // series worth animating; sparse one-offs (admin charts, occasional satellite
+  // pictures) are dropped. The natural gap in a full-day capture is wide (radar
+  // mosaics ~40 frames vs one-offs <10), so this sits comfortably between.
+  var MIN_EMWIN_FRAMES = 10;
+
   // Preferred display order for regions; anything else sorts alphabetically after.
   var REGION_ORDER = ['Full Disk', 'Mesoscale 1', 'Mesoscale 2'];
 
@@ -43,8 +57,28 @@
     return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
   }
 
+  // "20260708144607" (UTC) -> Date. EMWIN stamps carry no zone; they are UTC.
+  function parseEmwinStamp(s) {
+    return new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+      +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14)));
+  }
+
   // Decide what product a filename represents. Returns null to skip the file.
   function classify(filename, category) {
+    // EMWIN imagery (GIF/JPG/PNG) keys off the trailing product code, not the
+    // ABI filename forms below. One variant only — there is no coastline overlay.
+    if (category === 'EMWIN') {
+      var em = EMWIN_IMG_RE.exec(filename);
+      if (!em) return null;
+      var code = em[2].toUpperCase();
+      return {
+        key: 'emwin::' + code,
+        name: GS.catalog.emwinName(code),
+        rawName: code, code: code,
+        kind: 'emwin', band: null, variant: 'plain'
+      };
+    }
+
     if (!/\.png$/i.test(filename)) return null;            // only PNGs here
     if (/ copy(\.| )/i.test(filename) || / copy$/i.test(filename)) return null; // stray dupes
 
@@ -95,6 +129,33 @@
   // times, not folders.
   function parsePath(relPath) {
     var segs = relPath.split('/');
+
+    // EMWIN branch: a file anywhere under an "EMWIN" folder whose name is an EMWIN
+    // image. There is no sat/region/timeDir subtree — the filename carries the
+    // time and series — so we synthesize the tree: a single synthetic "EMWIN"
+    // satellite, and a region by broad family (radar mosaics vs. everything else).
+    var hasEmwin = false;
+    for (var e = 0; e < segs.length; e++) { if (/^EMWIN$/i.test(segs[e])) { hasEmwin = true; break; } }
+    if (hasEmwin) {
+      var em = EMWIN_IMG_RE.exec(segs[segs.length - 1]);
+      // Only CLAIM the file if it's actually an EMWIN image; otherwise fall through
+      // to the IMAGES/L2 logic below, so a stray non-image (or an ABI tree that
+      // happens to sit under a folder named "EMWIN") isn't silently dropped.
+      if (em) {
+        var stamp = em[1], code = em[2].toUpperCase();
+        // EMWIN retransmits some charts a few seconds apart for reliability; key the
+        // frame by the MINUTE (not second) so a retransmit dedupes to one frame
+        // instead of stuttering the animation. Cadence is ~15 min, so distinct
+        // frames never share a minute. The kept frame keeps its true (second) time.
+        return {
+          category: 'EMWIN', sat: 'EMWIN',
+          region: /^RAD/.test(code) ? 'Radar Mosaics' : 'EMWIN',
+          timeDir: stamp.slice(0, 12), time: parseEmwinStamp(stamp),
+          filename: segs[segs.length - 1], code: code
+        };
+      }
+    }
+
     var i = -1;
     for (var k = 0; k < segs.length; k++) {
       if (segs[k] === 'IMAGES' || segs[k] === 'L2') { i = k; break; }
@@ -289,6 +350,9 @@
         region.l2 = prodArr.filter(function (p) { return p.kind === 'l2'; });
         region.hasL2 = region.l2.length > 0;
         region.maxFrames = prodArr.reduce(function (m, p) { return Math.max(m, p.frames.length); }, 0);
+        // A region is single-kind by construction (EMWIN never mixes with ABI); tag
+        // it once here so the view reads region.kind instead of re-sniffing products.
+        region.kind = prodArr.some(function (p) { return p.kind === 'emwin'; }) ? 'emwin' : 'abi';
         // Display name: a roving meso sector shows WHERE it looked, not just its slot.
         region.label = region.slot + (region.center ? ' · ' + latlonLabel(region.center) : '');
         regionArr.push(region);
@@ -379,10 +443,32 @@
     var allTimesSet = new Set();   // distinct scan-time ms across everything
     var satTimes = new Map();      // sat id -> Set(ms), for primary detection
 
+    // EMWIN one-offs aren't worth animating: keep only product codes that recur at
+    // least MIN_EMWIN_FRAMES times across the whole capture. Counted up-front so a
+    // dropped series' sparse timestamps never enter the merge or the run timeline.
+    // We count DISTINCT MINUTES (p.timeDir) — the same key the frames dedupe on —
+    // so reliability retransmits don't inflate a one-off past the threshold. The
+    // cheap `EMWIN` path check keeps this from parsing every file of a non-EMWIN
+    // archive (parsePath's full work is wasted on them).
+    var emwinMinutes = new Map();   // code -> Set(minute key)
+    files.forEach(function (file) {
+      var rel = file.webkitRelativePath || file.relativePath || file.name;
+      if (!/EMWIN/i.test(rel)) return;
+      var p = parsePath(rel);
+      if (!p || p.category !== 'EMWIN') return;
+      var mins = emwinMinutes.get(p.code);
+      if (!mins) { mins = new Set(); emwinMinutes.set(p.code, mins); }
+      mins.add(p.timeDir);
+    });
+    var keepEmwin = new Set();
+    emwinMinutes.forEach(function (mins, code) { if (mins.size >= MIN_EMWIN_FRAMES) keepEmwin.add(code); });
+
     files.forEach(function (file) {
       var rel = file.webkitRelativePath || file.relativePath || file.name;
       var p = parsePath(rel);
       if (!p) { stats.skipped++; return; }
+      // Drop below-threshold EMWIN before the (pointless) classify + tree insert.
+      if (p.category === 'EMWIN' && !keepEmwin.has(p.code)) { stats.skipped++; return; }
       var c = classify(p.filename, p.category);
       if (!c) { stats.skipped++; return; }
 
@@ -423,9 +509,13 @@
     if (!allTimes.length) { return { runs: [], primarySat: null, defaultRun: 0, stats: stats }; }
 
     // 2. Primary satellite = the downlink you actually receive (most distinct scan
-    //    times). Everything else is a sparse 'relayed' passenger.
+    //    times). Everything else is a sparse 'relayed' passenger. The synthetic
+    //    'EMWIN' sat is relayed data, not a downlink — exclude it from the contest
+    //    so a dense radar feed can't out-count and demote the real satellite. Fall
+    //    back to it only when there's no real satellite (an EMWIN-only capture).
     var primarySat = null, best = -1;
-    satTimes.forEach(function (set, id) { if (set.size > best) { best = set.size; primarySat = id; } });
+    satTimes.forEach(function (set, id) { if (id !== 'EMWIN' && set.size > best) { best = set.size; primarySat = id; } });
+    if (primarySat === null) satTimes.forEach(function (set, id) { if (set.size > best) { best = set.size; primarySat = id; } });
 
     // 3. Segment into reception runs on the union of all scan times (a gap in
     //    EVERYTHING at once is the only true "receiver off"), then materialize each.

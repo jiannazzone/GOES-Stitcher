@@ -20,7 +20,13 @@
 
   function sanitize(s) { return String(s).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, ''); }
 
+  // EMWIN products are small pre-rendered charts (a few hundred px), not full-disk
+  // scans — there is nothing to downscale, so they render at native size only.
+  // region.kind is set once by the scanner (freezeSats).
+  function isEmwinRegion(region) { return region.kind === 'emwin'; }
+
   function resolutionOptions(region) {
+    if (isEmwinRegion(region)) return [{ v: null, label: 'Native' }];
     if (/mesoscale/i.test(region.id)) return [{ v: 500, label: '500 px (native)' }, { v: 1000, label: '1000 px' }];
     return [
       { v: 512, label: '512 px (fast)' },
@@ -29,7 +35,10 @@
       { v: null, label: 'Native 5424 px (heavy)' }
     ];
   }
-  function defaultResolution(region) { return /mesoscale/i.test(region.id) ? 500 : 1024; }
+  function defaultResolution(region) {
+    if (isEmwinRegion(region)) return 'native';
+    return /mesoscale/i.test(region.id) ? 500 : 1024;
+  }
 
   function drawCaption(ctx, W, H, title, sub) {
     var f = Math.max(11, Math.round(W * 0.018));
@@ -78,6 +87,7 @@
 
       var products = region.products.filter(function (p) { return p.frames.length > 0; });
       var l2 = region.l2 || [];
+      var isEmwin = isEmwinRegion(region);
 
       /* ---------- frame budget (memory + watchability) ----------
        * A continuously-received run has no folder/gap boundary to split on, so a
@@ -91,7 +101,7 @@
        * where data exists instead of on empty gaps. */
       var MEM_TARGET = 1.5e9;   // ~1.5 GB for the on-screen base entry (tunable)
       var LAYER_MEM = 0.4e9;    // ~0.4 GB per active L2 layer (they snap to the base, so coarser is fine)
-      var NATIVE_PX = /mesoscale/i.test(region.id) ? 2000 : 5424;   // native long-edge est.
+      var NATIVE_PX = isEmwin ? 1200 : (/mesoscale/i.test(region.id) ? 2000 : 5424);   // native long-edge est.
       function frameWidthPx() { return resSel.value === 'native' ? NATIVE_PX : parseInt(resSel.value, 10); }
       function budgetFor(memTarget) {
         var w = frameWidthPx() || NATIVE_PX;
@@ -148,9 +158,13 @@
       var groupDefs = [
         { kind: 'composite', label: 'composites' },
         { kind: 'channel', label: 'spectral bands' },
-        { kind: 'l2', label: 'level-2 products' }
+        { kind: 'l2', label: 'level-2 products' },
+        { kind: 'emwin', label: 'radar mosaics' }
       ];
-      var preferred = products.filter(function (p) { return /false color/i.test(p.name); })[0] || products[0];
+      // Default base: False Color for ABI, the national CONUS mosaic for EMWIN.
+      var preferred = products.filter(function (p) { return /false color/i.test(p.name); })[0]
+        || products.filter(function (p) { return p.rawName === 'RADREFUS'; })[0]
+        || products[0];
       var baseList = GS.ui.list(
         groupDefs.map(function (g) {
           return {
@@ -170,7 +184,8 @@
       resSel.value = String(defaultResolution(region));
 
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Base image' }), baseList.el]));
-      panel.appendChild(el('div', { class: 'gs-field' }, [coastLabel]));
+      // EMWIN charts have no SatDump _map (coastline) variant — hide the toggle.
+      if (!isEmwin) panel.appendChild(el('div', { class: 'gs-field' }, [coastLabel]));
       panel.appendChild(el('div', { class: 'gs-field' }, [el('label', { class: 'gs-label', text: 'Resolution' }), resSel]));
       panel.appendChild(el('div', { class: 'gs-hint gs-zoomhint', text: 'viewport · scroll to zoom · drag to pan · double-click resets' }));
 
@@ -200,7 +215,7 @@
           blend.addEventListener('change', function () { if (state.baseEntry && state.baseEntry.done) paint(state.index); });
           layerControls.push(lc);
         });
-      } else {
+      } else if (!isEmwin) {
         panel.appendChild(el('div', { class: 'gs-hint', html: 'No Level-2 layers in this region. Switch to a region that has L2 (e.g. <b>GOES-19 / Full Disk</b>) to stack them.' }));
       }
 

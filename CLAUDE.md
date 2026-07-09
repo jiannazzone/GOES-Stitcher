@@ -75,6 +75,27 @@ validated against SatDump's coastline overlay (Chesapeake sector → 38.2°N 76.
 `product.cbor` is missing/unreadable (e.g. the sample loader), the sector falls back to its
 slot label. **This is the only reason `scan` is async.** Non-meso datasets do zero reads.
 
+**EMWIN imagery — a second ingest grammar.** Alongside ABI, the HRIT downlink relays EMWIN
+(the low-rate text/graphics broadcast). Its files have no `IMAGES`/`L2` subtree — the WMO
+filename carries everything: `Z_…_KWIN_<YYYYMMDDHHMMSS>_<seq>-<pri>-<CODE>.GIF`. So `parsePath`
+has an **EMWIN branch** (a file under any `EMWIN/` folder matching `EMWIN_IMG_RE` — it *falls
+through* to the IMAGES/L2 logic if the name doesn't match, so an ABI tree under a folder named
+`EMWIN` isn't dropped): the 14-digit `_KWIN_` stamp is the frame **time** (UTC; the WMO header
+DDHHMM is nominal, not reception), and the trailing `CODE` is the **series** key — the same chart
+over and over. These map to a synthetic `sat "EMWIN" → region "Radar Mosaics"` (or `"EMWIN"` for
+non-`RAD*` codes), one product per code, `kind:'emwin'`, `variant:'plain'` only (no `_map`). The
+dedupe key is coarsened to the **minute** (`timeDir = stamp.slice(0,12)`) so EMWIN's reliability
+retransmits (~10 s apart) mostly collapse to one frame. Only codes recurring in **≥
+`MIN_EMWIN_FRAMES`** (10) distinct *minutes* survive — sparse one-offs are dropped before the tree
+insert (a cheap `EMWIN`-path pre-pass, so non-EMWIN archives pay nothing). The synthetic sat is
+**excluded from `primarySat` detection** (a dense radar feed must not demote the real satellite to
+`relayed`); it wins only when it's the sole sat. Friendly names for the ~15 NWS radar mosaic sectors
+live in `catalog.js` (`emwinName`); unknown codes degrade to the raw token. On drop, `app.js` no
+longer prunes `EMWIN/` but skips its ~10k text files per-file (`keepDropped`). `freezeSats` tags each
+region `region.kind` (`'emwin'`/`'abi'`); `view.js` reads that to render EMWIN **native-only** (small
+pre-rendered charts — nothing to downscale), add a `radar mosaics` base-list group, and hide the
+coastline toggle + the L2 hint.
+
 **The one unified view — `src/view.js` (`GS.ViewMode.create(panel, stage, region, ctx)`).**
 There is a single `<canvas>`. **`renderComposite(dest, i, opts)` is the choke point for
 everything** — playback, scrub, PNG, MP4, batch, deflicker, and pan/zoom all go through it.

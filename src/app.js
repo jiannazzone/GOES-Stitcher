@@ -173,13 +173,21 @@
 
   /* ---------- drag & drop folder traversal ---------- */
   // SatDump writes several non-image category folders alongside IMAGES/ and L2/
-  // (EMWIN text + weather charts, DCS reports, admin messages, …). They hold no
-  // ABI products but often thousands of tiny files, so when traversing a DROPPED
-  // folder we don't descend into them. Matched case-insensitively by folder name;
-  // none collide with a sat / region / timestamp segment. (The folder <input>
-  // can't be pruned this way — the browser enumerates the whole tree before it
-  // hands us the FileList; there we only surface the skipped count.)
-  var SKIP_DIRS = { emwin: 1, dcs: 1, 'admin messages': 1, 'additional data': 1, text: 1 };
+  // (DCS reports, admin messages, …). They hold no imagery but often thousands of
+  // tiny files, so when traversing a DROPPED folder we don't descend into them.
+  // Matched case-insensitively by folder name; none collide with a sat / region /
+  // timestamp segment. EMWIN is NOT skipped — it carries animatable radar-mosaic
+  // GIFs — but it's mostly text products, so we descend and drop its non-images
+  // per-file (see walkEntry). (The folder <input> can't be pruned this way — the
+  // browser enumerates the whole tree before it hands us the FileList; there we
+  // only surface the skipped count.)
+  var SKIP_DIRS = { dcs: 1, 'admin messages': 1, 'additional data': 1, text: 1 };
+
+  // Under EMWIN/, keep only the image products (the rest is ~10k text bulletins we
+  // don't animate); elsewhere keep everything and let the scanner classify.
+  function keepDropped(path) {
+    return !/(^|\/)EMWIN(\/|$)/i.test(path) || /\.(gif|jpe?g|png)$/i.test(path);
+  }
 
   function readAllEntries(reader) {
     return new Promise(function (resolve, reject) {
@@ -195,6 +203,7 @@
   }
   function walkEntry(entry, files) {
     if (entry.isFile) {
+      if (!keepDropped(entry.fullPath || entry.name || '')) return Promise.resolve();
       return new Promise(function (resolve) {
         entry.file(function (f) {
           try { f.relativePath = entry.fullPath.replace(/^\//, ''); } catch (e) { /* read-only in some browsers */ }

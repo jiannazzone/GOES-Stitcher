@@ -10,6 +10,7 @@ One **view** that combines animation over *time* with compositing over *layers*,
 
 - **Whole-archive stitching** — point it at a folder of many capture sessions and it merges them all, then auto-splits the timeline into continuous **runs** (one per receiver-on window; a >2 h gap starts a new one), so a full day plays as a single clip. Roving **mesoscale** sectors are pinned to their real lat/lon (operators steer them at storms, so the slot number isn't a place), and the satellite you actually receive is kept apart from its sparse **relayed** passenger.
 - **Base image** — pick any product (composite, raw ABI band, or L2) as the bottom layer, with an optional **coastline** overlay.
+- **EMWIN radar mosaics** — the HRIT downlink also relays EMWIN weather graphics; the app pulls out the recurring **NWS radar mosaics** (national reflectivity plus the regional sectors: Alaska, Hawaii, Puerto Rico, Great Lakes, Pacific NW/SW…) and stitches each into its own time-lapse, keyed by the product code in the WMO filename. Sparse one-off charts are skipped.
 - **Level-2 layers** — stack derived products (rain rate, cloud-top height/temperature, CAPE, total precipitable water) on top, each with its own **opacity** and **blend mode**, and a **colorbar legend** reproduced from SatDump's own LUT (with real units — numeric where NOAA's product range is known).
 - **Timeline** — the base product's scans define a timeline you **play / scrub / loop**; every active layer snaps to its nearest frame in time, so base and layers animate together. **Deflicker** evens out the day/night brightness pulse. Burn in a UTC timestamp and **export an H.264 MP4** of the whole run (encoded in-browser, plays everywhere), or **save a PNG** of the current composite.
 - **Pan & zoom** — scroll to zoom into a feature, drag to pan, double-click to reset (raise the resolution for crisp deep zoom).
@@ -86,15 +87,18 @@ SatDump writes something like:
 │           └── <YYYY-MM-DD_HH-MM-SS>/         (UTC scan time)
 │               ├── G19_2/7/8/9/13/14/15_…Z.png   raw ABI bands
 │               └── abi_rgb_<Name>[_map].png      composites (+ coastline variant)
-└── L2/
-    └── GOES-19/Full Disk/<timestamp>/
-        └── abi_rgb_<Product>[_map].png           derived Level-2 products
+├── L2/
+│   └── GOES-19/Full Disk/<timestamp>/
+│       └── abi_rgb_<Product>[_map].png           derived Level-2 products
+└── EMWIN/
+    └── Z_…_KWIN_<YYYYMMDDHHMMSS>_…-<CODE>.GIF     relayed weather graphics (radar mosaics)
 ```
 
 - Time comes from the scan-time folder name (UTC). `_map` files are the coastline-overlaid variant.
 - **Sessions are stitched into runs.** SatDump starts a new folder each capture, so the app ignores folder boundaries and segments everything by scan-time gaps into **reception runs** — a gap over **2 hours** starts a new run, so two adjacent folders from one continuous capture merge while day-apart captures stay separate. Pick a run from the **Run** selector, or **All · span gaps** to force the whole archive into one timeline.
 - **Relayed satellites.** On a GOES-19 (East) HRIT downlink you'll see occasional GOES-18 (West) frames — its hourly Band-13 relay. The satellite you actually receive (the one with the most scans) is the *primary*; the other is marked **· relayed** and never auto-selected, since it's far too sparse to animate on its own.
 - **Mesoscale sectors are located by lat/lon, not slot number.** The two ABI mesoscale sectors are *roving* — operators point them at storms, so "Mesoscale 1" is a different place on different days. The app reads each frame's `product.cbor` navigation and labels each sector by its center (**Mesoscale 1 · 38.2°N 76.0°W**), so a sector that moved shows up as separate, correctly-stitched regions instead of an animation that teleports between locations.
+- **EMWIN is decoded from the filename.** EMWIN graphics carry no scan-time folder — the WMO name does: the `_KWIN_` timestamp is the frame time (UTC) and the trailing code (`RADREFUS`, `RADALLAK`, …) is the series. They appear under a synthetic **EMWIN** satellite / **Radar Mosaics** region, one series per code. Only codes that recur **≥ 10 times** are kept (sparse one-offs are dropped), and reliability retransmits a few seconds apart collapse to a single frame. EMWIN's thousands of text bulletins are ignored.
 - Grayscale single-band L2 duplicates (`G19_ACHT_…`), `product.cbor`, stray `… copy.png`, and non-standard folders (e.g. `NWS/`) are ignored.
 - **Note:** layers of different native resolutions (e.g. 5424² vs 1086²) line up because all full-disk products share the same earth extent; they're scaled to a common working canvas.
 
@@ -120,7 +124,7 @@ The code was pair-programmed with Anthropic's **Claude** (Claude Code) — archi
 | `assets/styles.css` | terminal theme |
 | `assets/fonts/` | self-hosted mono webfonts |
 | `src/catalog.js` | ABI band + product metadata, display-name cleanup, L2 colorbar scales, glossary |
-| `src/scanner.js` | folder → `run → sat → region → product → frames` index (gap-based run stitching; meso located from `product.cbor`) |
+| `src/scanner.js` | folder → `run → sat → region → product → frames` index (gap-based run stitching; meso located from `product.cbor`; EMWIN radar mosaics from WMO filenames) |
 | `src/imaging.js` | decode/downscale, compositing, deflicker, MP4/video export, batch ZIP, downloads |
 | `src/samples.js` | optional "try sample data" loader (fetches bundled demo PNGs) |
 | `src/view.js` | the unified view — base + layers + timeline + deflicker + pan/zoom + batch + legend |

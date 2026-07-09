@@ -89,12 +89,39 @@
     'Total Precipitable Water': 'Level-2 (TPW): total column water vapor.'
   };
 
-  // Full-name lookup for satellites.
+  // Full-name lookup for satellites. 'EMWIN' is not a spacecraft — it's the
+  // low-rate text/graphics broadcast relayed over the same HRIT downlink — but it
+  // rides the sat/region/product tree as a synthetic "satellite" so its imagery
+  // animates through the same view.
   var SATELLITES = {
     'GOES-16': 'GOES-16 (on-orbit spare)',
     'GOES-17': 'GOES-17 (West)',
     'GOES-18': 'GOES-18 (West)',
-    'GOES-19': 'GOES-19 (East)'
+    'GOES-19': 'GOES-19 (East)',
+    'EMWIN': 'EMWIN (relayed charts)'
+  };
+
+  // EMWIN radar-mosaic product codes (the trailing token of the WMO filename,
+  // e.g. "…-RADREFUS.GIF") -> clean display name. These are the standard NWS
+  // regional radar mosaic sectors; the national CONUS reflectivity is RADREFUS.
+  // Unknown codes fall back to the raw token (see emwinName), so this is a label
+  // table, not a filter — the scanner decides which series to keep.
+  var EMWIN_PRODUCTS = {
+    RADREFUS: 'Radar · CONUS reflectivity',
+    RADALLAK: 'Radar · Alaska',
+    RADALLHI: 'Radar · Hawaii',
+    RADALLPR: 'Radar · Puerto Rico',
+    RADALLGU: 'Radar · Guam',
+    RADPACNW: 'Radar · Pacific Northwest',
+    RADPACSW: 'Radar · Pacific Southwest',
+    RADRCKNT: 'Radar · Northern Rockies',
+    RADRCKST: 'Radar · Southern Rockies',
+    RADUMSVY: 'Radar · Upper Mississippi Valley',
+    RADSMSVY: 'Radar · Southern Mississippi Valley',
+    RADSTHPL: 'Radar · Southern Plains',
+    RADGRTLK: 'Radar · Great Lakes',
+    RADNTHES: 'Radar · Northeast',
+    RADSTHES: 'Radar · Southeast'
   };
 
   // A few authoritative references, surfaced in the About / glossary panel.
@@ -177,6 +204,13 @@
 
     satelliteLabel: function (id) {
       return SATELLITES[id] || id;
+    },
+
+    // EMWIN product code -> clean display name; unknown radar codes degrade to
+    // "Radar · <code>", anything else to the raw code.
+    emwinName: function (code) {
+      if (EMWIN_PRODUCTS[code]) return EMWIN_PRODUCTS[code];
+      return /^RAD/.test(code) ? 'Radar · ' + code.slice(3) : code;
     },
 
     // Is this L2 abbreviation one we recognize?
