@@ -30,9 +30,13 @@ There is no test runner or linter. Verification is manual + ad-hoc.
   A server (not `file://`) is required for the "try sample data" loader and any `fetch`.
 - **Syntax check a file:** `node --check src/<file>.js` (catches parse errors; there is no lint).
 - **Bundle sample data:** drop *downscaled* PNGs under `samples/<session>/IMAGES|L2/...`
-  keeping the `.../IMAGES|L2/<sat>/<region>/<YYYY-MM-DD_HH-MM-SS>/<file>.png` tail, then run
-  `node samples/build-manifest.mjs`. Cloudflare Pages caps files at **25 MB**; native
-  full-disk PNGs are 15–35 MB, so downscale to ~1024–2048 px. Sample content is not committed.
+  keeping the `.../IMAGES|L2/<sat>/<region>/<YYYY-MM-DD_HH-MM-SS>/<file>.png` tail — plus
+  native EMWIN images under any `samples/<session>/EMWIN/` and each meso folder's
+  `product.cbor` — then run `node samples/build-manifest.mjs` (it lists all three: ABI PNGs,
+  meso `product.cbor`, EMWIN images). Cloudflare Pages caps files at **25 MB** and a deploy at
+  **20,000 files**; native full-disk PNGs are 15–35 MB, so downscale to ~1024–2048 px
+  (EMWIN/meso charts are small pre-rendered images — copy native). Sample content **is**
+  committed: Pages builds the site from the repo, so `samples/` *is* the deploy artifact.
 - **Browser-behavior testing:** there is no framework. Behavior is verified with an ad-hoc
   CDP harness — Node 22's built-in global `WebSocket` driving `--headless=new` Chrome in
   **real time**, loading the app over the local server and asserting via `Runtime.evaluate`.
@@ -72,8 +76,9 @@ GOES-R inverse-geos live in `scanner.js`), takes the crop **center** (`offset_x/
 · 38.2°N 76.0°W`), so same-place frames stitch and different-place frames never merge — a real
 run has one meso position, `All · span gaps` shows each position separately. The math was
 validated against SatDump's coastline overlay (Chesapeake sector → 38.2°N 76.0°W). If a
-`product.cbor` is missing/unreadable (e.g. the sample loader), the sector falls back to its
-slot label. **This is the only reason `scan` is async.** Non-meso datasets do zero reads.
+`product.cbor` is missing/unreadable, the sector falls back to its slot label (the bundled
+samples ship the cbor, so meso-by-location works in the demo too). **This is the only reason
+`scan` is async.** Non-meso datasets do zero reads.
 
 **EMWIN imagery — a second ingest grammar.** Alongside ABI, the HRIT downlink relays EMWIN
 (the low-rate text/graphics broadcast). Its files have no `IMAGES`/`L2` subtree — the WMO
