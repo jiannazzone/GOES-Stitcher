@@ -1,15 +1,17 @@
-# Cloudflare Pages response headers (consumed at deploy; never served itself).
+# Cloudflare Pages response headers (consumed at deploy).
 #
-# Pages' default for assets is `max-age=0, must-revalidate`, which means every
-# repeat visit re-validates EVERY sample file. The manifest runs to hundreds of
-# files, so that default costs a few hundred round trips (~50s) on a second load
-# even though nothing changed. Sample media is immutable at a given path — a
-# re-seed writes new dated session folders (new URLs) — so cache it hard.
-/samples/*
+# Pages defaults assets to `max-age=0, must-revalidate`, so every repeat visit
+# re-validates EVERY sample file — a few hundred round trips (~50s) on a second
+# load even though nothing changed. Sample media is immutable at a given path (a
+# re-seed writes new dated session folders = new URLs), so cache it for a year.
+#
+# The pattern is `:session/*`, NOT `/samples/*`, and that matters: Pages APPENDS
+# every matching rule's headers rather than letting a more specific rule win, so
+# a `/samples/*` rule plus a `/samples/manifest.json` rule yields one spliced
+# `Cache-Control: ...immutable, ...must-revalidate` and the browser honours the
+# first directives it parses — pinning the manifest for a year. A `:session`
+# placeholder matches exactly one segment, so this covers the media (always
+# >=2 segments deep) and never touches /samples/manifest.json, which keeps the
+# Pages default and stays revalidating so a future re-seed is picked up.
+/samples/:session/*
   Cache-Control: public, max-age=31536000, immutable
-
-# ...except the manifest, which is the index NAMING those files: it must be
-# allowed to change so a future re-seed is picked up. (samples.js already
-# requests it with cache:'no-store'; this keeps the CDN honest too.)
-/samples/manifest.json
-  Cache-Control: public, max-age=60, must-revalidate
